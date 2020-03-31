@@ -1,0 +1,1591 @@
+---
+title: "NSFG_Cleaning"
+author: "Jennifer Spencer"
+date: "9/22/2019"
+output: html_document
+---
+
+
+This file imports 4 cycles (8 years worth) of data from the National Survey of Family Growth
+
+**The file proceeds as follows:**
+
+**[1] We import the relevant files from raw NSFG files.** 
+
+**[2] We create a matched dataset containing all years and only the variables of interest.**
+
+**[3] We define sexual behavior categories based on survey data **
+
+**[4] Define several target statistics and validation measure for our model. ** 
+
+```{r setup, include=FALSE}
+# First we clear the system and load packages
+rm(list=ls())
+
+library(tidyverse)   #ggplot & data manipulation packages
+library(survey)      #for incorporating complex survey design
+library(kableExtra)  #for making tables look nice
+library(ggpubr)      #for making figures look nice
+library(readstata13) #for reading in the Stata Files
+library(openxlsx)    #For writing to excel files
+```
+
+## Import Files
+
+The NSFG provides Stata or SAS read-in files along with data dictionaries. A separate piece of Stata code (NSFG_Inputs.do) reads in all the raw files and saves as .dta. 
+
+Here I read in these files as .dta and save only the relevant variables 
+
+####Male Data
+    Detailed questions asked about sex with men, but fewer about sex with women
+    **Demographics** Age and ID
+    **Age of Sexual Onset**  Questions about first age at first sex
+    **F Partner Data** Have you ever had sex with a woman, how many ever, how many past year
+    **Egocentric Heterosexual Data** Detailed information about first relationship and up to three past-year relationships
+    **CASI Data F Partner** Addition questions about female partners
+    **M Partner data** Have you ever had sex with a man, how many ever, how many past year
+
+
+```{r F_function, warning=FALSE}
+
+f.var_M_data       <- function(data, year) {
+data_out           <- data   %>% select(          
+                      # # # # Demographics   # # # # 
+                                                  CASEID,    #ID
+                                           "strata"=SEST,    #Strata Variable
+                                            "panel"=SECU,    #Panel Variable
+                                              "age"=AGER,   #Age
+                                              
+                      # # # # Age of Onset   # # # #   
+                                         "age_same"=SAMESEX1,    #age at first same-sex experience
+                                        "age_first"=VRY1STAG,     #This is a recode- not sure how/why it is different
+                      
+                      # # # #  Numbers of F Partners   # # # #   
+                                         "eversex"=RHADSEX,     #have you ever had sex ---with a man---
+                                      "num_f_ever"=LIFPRTNR,     #total number of partners 
+                                        "num_f_yr"=OPPYEARNUM,    #number of partners in past year
+                                       "frequency"=SEXFREQ,     #number of times having sex in the past 4 weeks
+                                      #  "count"=
+                      # # # #  First Female Partner    # # # #                 
+                            #               "p_age"=FSEXPAGE   ,   #First partner's age
+                             #         "p_age_diff"=FPRELYRS,    #number of years of age difference (older/younger)
+                             #    "current_p_first"=STILFPSX,    #In current relationship with first partner
+                             #       "last_p_first"=CMLSEXFP,    #date last had sex with first ever partner
+    
+                      # # # #  Most recent Female Partner    # # # #                                                                  
+                             #            "pr_check"=MATCHFP,     #is most recent partner first partner? 
+                             #       "last_p_recent"=CMLSEX,      #date of last sex with most recent partner
+                             #      "first_p_recent"=CMFSEX,      #date of first sex with most recent partner
+                                "current_p_recent"=PXCURRPRT,    #Is this partner a current partner? 
+                                  "ageat_p_recent"=AGEFSXP,     #Age at first sex with most recent partner       
+                                  "p_recent_birth"=PXDOB_Y,    #year of most recent partners birth
+                                   "p_recent_year"=PXSXFRST_Y,    #year of first sex with most recent partner
+                                      "duration_1"=PARTDUR1,      #duration of most recent partnership
+                                   "current_p_rel"=P1RELATION,     #relationship to current partner 
+                    
+                            # # # #  2nd most recent Female Partner    # # # #                              
+                             #            "p2_check"=MATCHFP2,    #is second-most recent partner first partner? 
+                             #             "last_p2"=CMLSEX2,     #date of most last sex with 2nd most recent partner
+                             #            "first_p2"=CMFSEX2,     #date of first sex with 2nd most recent partner
+                                        "current_p2"=PXCURRPRT2,  #is 2nd most recent partner a current partner?  
+                                        "duration_2"=PARTDUR2,   #duration of 2nd most recent partnership
+                                 
+                          # ## # #  3rd most recent Female Partner    # # # #   
+                              #           "p3_check"=MATCHFP3,    #is third most recent partner first partner? 
+                              #            "last_p3"=CMLSEX3,     #date of most last sex with 3rd most recent partner
+                              #           "first_p3"=CMFSEX2,     #date of first sex with 3rd most recent partner
+                                        "current_p3"=PXCURRPRT3,  #is 3rd most recent partner a current partner? 
+                                         "duration_3"=PARTDUR3,      #duration of 3rd most recent partnership
+                                 
+                          # # # #  CASI Data -M Partners    # # # #                                             
+                                #     "num_m_ever2"=PARTSLIF_1,   #Male Partners ever- asked again  #Same as above so removed
+                                #       "num_m_any"=OPPLIFENUM,   #Male partners for any kind of sexual contact
+                                #       "num_m_yr2"=PARTS12M_1,   #Male Partners past year- asked again
+                              #     "yr_bi_partner"=BISEXPRT,     #Any MSM partners
+                                  "yr_nonm_partner"=NONMONOG,     #Any non-monogomous partners 
+                                 "num_nonm_partner"=NNONMONOG1,   #Number non-monogomous partners   
+                                    "receptive_msm"=ANALSEX2,     #Ever had receptive anal sex
+                                    "insertive_msm"=ANALSEX3,     #Ever had insertive anal sex                   
+                      
+                          #         "age_diff_male"=MALPRTAGE,    #Relative age of R's most recent male partner (not helpful - just ";older or "younger")
+                          # # # #  CASI Data -F Partners    # # # #                      
+                                          "ever_m"=SAMESEXANY,   #Female Partners ever
+                                      "num_m_ever"=SAMLIFENUM,   #Number F partners lifetime
+                                        "num_m_yr"=SAMYEARNUM,   #Number F partners in past year
+                                   )
+
+   if(year==2017) { 
+data_orientation      <- data   %>% select( 
+                                                  CASEID,
+                                    "orientation"=ORIENT_A        #self-described orientation    
+                                    )
+
+} else { 
+data_orientation      <- data   %>% select( 
+                                                  CASEID,
+                                    "orientation"=ORIENT         #self-described orientation    
+                                    )
+
+}
+
+data_out             <- merge(data_out, data_orientation, by="CASEID", all = TRUE)
+
+
+data_out$year   <- year
+data_out$gender <- "M"
+
+return(data_out)
+}
+
+
+```
+
+Then use this loop to pull in all these variables 
+
+```{r all_years_F, warning=FALSE}
+
+#Read in raw data
+M_2013             <- read.dta13("./_2a_Inputs/NSFG/2011-2013/2011_2013_MaleData.dta")
+M_2015             <- read.dta13("./_2a_Inputs/NSFG/2013-2015/2013_2015_Male.dta")
+M_2017             <- read.dta13("./_2a_Inputs/NSFG/2015-2017/2015_2017_MaleData.dta")
+
+#clean 2013
+M_2013_vars        <- f.var_M_data(M_2013, 2013)
+
+#clean 2015
+M_2015_vars        <- f.var_M_data(M_2015, 2015)
+
+#clean 2017
+M_2017_vars        <- f.var_M_data(M_2017, 2017)
+
+#Combine together and make an ID Variable
+M_NSFG             <- rbind(M_2013_vars, M_2015_vars, M_2017_vars)
+
+#Get rid of some of these that we don't need
+#rm(M_2013, M_2015, M_2017, M_2013_vars, M_2015_vars, M_2017_vars)
+
+```
+
+## Sexuality Data 
+
+Define number of male and female partners based on multiple questions. Remove those who refuse to answer or report not knowing. 
+
+```{r sexual_behavior}
+
+
+#Female Partners Ever
+
+  #Removed "refused" and "don't know" 
+  M_NSFG$num_f_ever[
+    M_NSFG$num_f_ever==998 | 
+    M_NSFG$num_f_ever==999 |
+    M_NSFG$num_f_ever==997 ]                 <- NA
+  
+  
+  #Replace number=0 if never had sex 
+  M_NSFG$num_f_ever[
+    M_NSFG$eversex=="NO"]                    <- 0
+
+
+#Female Partners Past Year
+
+  
+ #Removed "refused" and "don't know" 
+  M_NSFG$num_f_yr[
+    M_NSFG$num_f_yr==998 | 
+    M_NSFG$num_f_yr==999 |
+    M_NSFG$num_f_yr==997 ]                   <- NA
+  
+  
+  #Replace number=0 if never had sex 
+  M_NSFG$num_f_yr[M_NSFG$eversex=="NO"]      <- 0
+
+#Recode this from string EVER
+M_NSFG$num                                   <- NA
+M_NSFG$num[M_NSFG$ever_m=="NO"]              <- 0
+M_NSFG$num[M_NSFG$num_m_ever=="1 PARTNER"]   <- 1
+M_NSFG$num[M_NSFG$num_m_ever=="2 PARTNERS"]  <- 2
+M_NSFG$num[M_NSFG$num_m_ever=="3 PARTNERS"]  <- 3
+M_NSFG$num[M_NSFG$num_m_ever=="4 PARTNERS"]  <- 4
+M_NSFG$num[M_NSFG$num_m_ever=="5 PARTNERS"]  <- 5
+M_NSFG$num[M_NSFG$num_m_ever=="6 PARTNERS"]  <- 6
+M_NSFG$num[M_NSFG$num_m_ever=="7 PARTNERS"]  <- 7
+M_NSFG$num[M_NSFG$num_m_ever=="8 PARTNERS"]  <- 8
+M_NSFG$num[M_NSFG$num_m_ever=="9 PARTNERS"]  <- 9
+M_NSFG$num[M_NSFG$num_m_ever=="10 OR MORE PARTNERS"] <- 10
+
+M_NSFG$num_m_ever <- M_NSFG$num 
+
+
+
+#Recode this from string PAST YEAR
+M_NSFG$num                                   <- NA
+M_NSFG$num[M_NSFG$ever_m=="NO"]              <- 0
+M_NSFG$num[M_NSFG$num_m_yr=="1 PARTNER"]     <- 1
+M_NSFG$num[M_NSFG$num_m_yr=="2 PARTNERS"]    <- 2
+M_NSFG$num[M_NSFG$num_m_yr=="3 PARTNERS"]    <- 3
+M_NSFG$num[M_NSFG$num_m_yr=="4 PARTNERS"]    <- 4
+M_NSFG$num[M_NSFG$num_m_yr=="5 PARTNERS"]    <- 5
+M_NSFG$num[M_NSFG$num_m_yr=="6 OR MORE PARTNERS"] <- 6
+
+M_NSFG$num_m_yr <- M_NSFG$num 
+
+
+```
+
+We then pull in and incorporate the 6 year survey weights from NSFG to reflect the US population. 
+
+```{r survey_weights}
+# # # # Survey Weights  # # # #
+
+weights_6y         <- read.dta13("./_2a_Inputs/NSFG/weights/weights6y_M.dta")
+
+#Match data from all years with weight file by ID 
+M_NSFG             <- merge(M_NSFG, weights_6y, by="CASEID", all = TRUE)
+
+
+M_NSFG$WGT2011_2017[
+  is.na(M_NSFG$WGT2011_2017
+    )]             <- 0
+
+
+
+#Create our survey design variable 
+nsfg_design        <- svydesign(id      = ~CASEID,
+                                strata  = ~strata,
+                                weights = ~WGT2011_2017,
+                                nest    = TRUE,
+                                data    = M_NSFG)
+
+```
+
+
+Now we define men  based on their sexual behavior data, favoring recent data such that: 
+
+```{r table_define1, echo=FALSE}
+
+#Add a formatted table
+
+text_tbl <- data.frame(
+  Category = c("Not Sexually Active", "Women Only", "Men Only", "Men and Women"),
+  Description = c(
+    "No previous sexual partners",
+    "Only opposite-sex partners OR majority of all partners or past year partner is opposite-sex with no more than 2 previous same-sex partners",
+    "Only same-sex partners OR majority of all partners or past year most recent partner is same-sex with no more than 2 previous opposite-sex partners",
+    "1+ same-sex and 1+ opposite-sex partners in the previous year OR
+    3+ same-sex and 3+ opposite-sex lifetime partners OR
+    3+ same-sex partners lifetime and an opposite-sex partner in the previous year OR
+    3+ opposite-sex partners lifetime and a same-sex partner in the previous year"))
+
+kable(text_tbl) %>%
+  kable_styling(full_width = F, font="black") %>%
+  column_spec(1, bold = T, border_right = T) %>%
+  column_spec(2, width = "50em", background = "white") %>%
+  row_spec(1, color="#e7298a")  %>%
+  row_spec(2, color="#1b9e77")  %>%
+  row_spec(3, color="#7570b3")  %>%
+  row_spec(4, color="#d95f02")
+
+
+```
+
+```{r behavior_define}
+
+
+#Now define bisexual
+#First by lifetime behavior
+M_NSFG$behav[M_NSFG$num_f_ever>0  & M_NSFG$num_m_ever<3 ]         <- "Women Only" 
+M_NSFG$behav[M_NSFG$num_m_ever>0  & M_NSFG$num_f_ever<3 ]         <- "Men Only"
+
+#Then, replace favoring recency (if you haven't had 3 partners of one type we give preference to your more recent behavior)
+M_NSFG$behav[M_NSFG$num_m_yr>0]                                   <- "Men Only"
+M_NSFG$behav[M_NSFG$num_f_yr>0]                                   <- "Women Only"
+
+#Finally if you haven't had sex with anyone this year and have fewer than 3 of each, 
+      #we default to which group you've had more sex with, with ties going to Men Only
+M_NSFG$behav[M_NSFG$num_m_yr==0  & M_NSFG$num_f_yr==0 &
+             M_NSFG$num_f_ever<3 & M_NSFG$num_m_ever<3 & 
+            (M_NSFG$num_m_ever  >= M_NSFG$num_f_ever)]           <- "Men Only"
+
+#Then change identify as bisexual if you've had three of both or one of each in the previous year
+M_NSFG$behav[ (M_NSFG$num_f_ever>=3 & M_NSFG$num_m_ever>=3) | 
+              (M_NSFG$num_f_yr>=1   & M_NSFG$num_m_ever>=3) | 
+              (M_NSFG$num_f_ever>=3 & M_NSFG$num_m_yr>=1)  ]      <- "Men and Women"
+
+M_NSFG$behav[M_NSFG$num_f_yr>=1     & M_NSFG$num_m_yr>=1  ]       <- "Men and Women"
+
+#If you've never had sex you are in the none category
+M_NSFG$behav[M_NSFG$num_f_ever==0 & M_NSFG$num_m_ever==0 ]        <- "none"
+
+
+#Add category for MSM and MSW- here we consider MSMW to be MSM
+M_NSFG$behav2[M_NSFG$behav=="Men Only" |
+                M_NSFG$behav=="Men and Women" ]                    <- "MSM"
+M_NSFG$behav2[M_NSFG$behav=="Women Only"]                          <- "MSW"
+M_NSFG$behav2[M_NSFG$behav=="none"]                                <- "NA"
+
+#Update  our survey design variable 
+nsfg_design        <- svydesign(id      = ~CASEID,
+                                strata  = ~strata,
+                                weights = ~WGT2011_2017,
+                                nest    = TRUE,
+                                data    = M_NSFG)
+
+#Report this with survey weights
+  ((svymean(~as.factor(behav),  nsfg_design, na.rm=TRUE))*100) %>%
+  kable(digits=(c(2,3))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+    row_spec(4, color="#1b9e77")  %>%
+    row_spec(2, color="#7570b3")  %>%
+    row_spec(3, color="#e7298a")  %>%
+    row_spec(1, color="#d95f02") %>%
+  add_header_above(c("Weighted Percent: Sexual Behavior"=3))
+
+
+
+
+#Report this with survey weights
+  ((svymean(~as.factor(behav2),  nsfg_design, na.rm=TRUE))*100) %>%
+  kable(digits=(c(2,3))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+    row_spec(3, color="#e7298a")  %>%
+    row_spec(2, color="#1b9e77")  %>%
+    row_spec(1, color="#7570b3") %>%
+  add_header_above(c("Weighted Percent: Sexual Behavior"=3))
+
+```
+We also compare by self-reported orientation: 
+```{r define_orientation , echo=FALSE}
+ text_tbl <- data.frame(
+   Category = c("Heterosexual", "Homosexual", "Bisexual"),
+   Description_Alternative = c(
+     "Identifies as straight/heterosexual",
+     "Identifies as gay/homosexual ",
+     "Identifies as bisexual"))
+ 
+ kable(text_tbl) %>%
+   kable_styling(full_width = F, font="black") %>%
+   column_spec(1, bold = T, border_right = T) %>%
+   column_spec(2, width = "50em", background = "white") %>%
+   row_spec(1, color="#1b9e77")  %>%
+   row_spec(2, color="#7570b3")  %>%
+   row_spec(3, color="#d95f02")
+ 
+ 
+```
+
+
+```{r orientation}
+  M_NSFG$self_orient[M_NSFG$orientation=="Heterosexual or straight"]     <-"heterosexual" 
+  M_NSFG$self_orient[M_NSFG$orientation=="HETEROSEXUAL OR STRAIGHT"]     <-"heterosexual" 
+ 
+  M_NSFG$self_orient[M_NSFG$orientation=="Homosexual or gay"]            <-"homosexual"
+  M_NSFG$self_orient[M_NSFG$orientation=="HOMOSEXUAL OR GAY"]            <-"homosexual"
+  
+  M_NSFG$self_orient[M_NSFG$orientation=="Bisexual"]                     <-"bisexual"  
+  M_NSFG$self_orient[M_NSFG$orientation=="BISEXUAL"]                     <-"bisexual"  
+  
+  M_NSFG$self_orient[M_NSFG$orientation=="Homosexual, gay, or lesbian"]  <-"homosexual"
+  M_NSFG$self_orient[M_NSFG$orientation=="Bisexual"]                     <-"bisexual"    
+  
+  #Create our survey design variable 
+  nsfg_design                                                            <- svydesign(id      = ~CASEID,
+                                                                                      strata  = ~strata,
+                                                                                      weights = ~WGT2011_2017,
+                                                                                      nest    = TRUE,
+                                                                                      data    = M_NSFG)
+                                                         
+     ((svymean(~as.factor(self_orient),  nsfg_design, na.rm=TRUE))*100) %>%
+     kable(digits=c(2,3)) %>%
+     kable_styling(bootstrap_options = c("condensed", full_width= F, position="center"))%>%
+     column_spec(1, bold = T) %>%
+        row_spec(2, color="#1b9e77")  %>%
+       row_spec(3, color="#7570b3")  %>%
+        row_spec(1, color="#d95f02")  %>%
+     add_header_above(c("Raw Percent: Sexual Orientation"=3))
+ 
+```
+
+### Sexual Behavior Graphs
+
+We can make graphs to show how each of our behavior categories (in our primary definition) split out by what gender their partners have been in the previous year and in their lifetime. By definition, we don't see any "heterosexual" men who have had sex with a man in the previous year or more than two men ever. The same goes for gay men having no sex with a woman in the previous year and sex with not more than two women in their lifetime. Men who are not sexually active are, as we would expect, at 0 for both. 
+
+First let's compare self-report to how we define people
+
+```{r compare_self}
+
+prop_behav <- svyby(~self_orient, by=~behav, nsfg_design, 
+             svymean, na.rm=TRUE)  
+
+prop_behav1 <- prop_behav[1:5]
+
+rownames(prop_behav1)<- c("Men and Women", "Men Only", "None","Women Only")
+
+
+ (prop.table(table(M_NSFG$behav, M_NSFG$self_orient), margin = 1)*100) %>%
+        kable(digits=c(1,1,1,1), escape = F) %>%
+           kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+          column_spec(1, bold = T) %>%
+
+          row_spec(1, color="#d95f02", bold=T)  %>%
+          row_spec(2, color="#1b9e77", bold=T)  %>%
+          row_spec(3, color="#e7298a", bold=T)  %>%
+          row_spec(4, color="#7570b3", bold=T)  %>%
+  
+  
+         column_spec(2, background="#fee0c8")  %>%
+         column_spec(3, background="#d4f8ed")  %>%
+         column_spec(4, background="#e4e3f0")  %>%
+
+     add_header_above(c("Sexual Orientation vs Sexual Behavior"=4))
+    
+    
+```
+
+```{r sex_graphs_behavior, echo=FALSE, warning=FALSE}
+
+
+#Make Graphs to show how this splits up by ever
+
+ggplot(M_NSFG, aes(x=num_m_ever, y=num_f_ever, color=behav)) +
+ scale_color_manual(name="Sexual Partners", 
+                     breaks=c("Women Only", "Men Only", "Men and Women", "none"), 
+                     values=c("Men and Women"="#d95f02", "Men Only"="#7570b3", "none"="#e7298a", "Women Only"="#1b9e77"), na.translate=FALSE) +
+  geom_jitter(width=0.3, height=0.3) + theme_classic() +
+  xlim(0,15) + ylim(0,50) + ggtitle("Men's Sexual Partners by Partner Gender: Lifetime") +
+  ylab("lifetime F sex partners") + xlab("lifetime M sex partners")
+
+#Make Graphs to show how this splits up by past year
+ggplot(M_NSFG, aes(x=num_m_yr, y=num_f_yr, color=behav)) +
+  scale_color_manual(name="Sexual Behavior Group", 
+                     breaks=c("Women Only", "Men Only", "Men and Women", "none"), 
+                     values=c("Men and Women"="#d95f02", "Men Only"="#7570b3", "none"="#e7298a", "Women Only"="#1b9e77"),
+                     na.translate=FALSE) +
+  geom_jitter(width=0.3, height=0.3) + theme_classic() +
+  xlim(0,8) + ylim(0,15) + ggtitle("Men's Sexual Partners by Partner Gender: Previous Year") +
+  ylab("past year F sex partners") + xlab("past year M sex partners")
+
+M_NSFG$partners    <- M_NSFG$num_f_ever + M_NSFG$num_m_ever
+
+#by year
+M_NSFG$partners_y  <- M_NSFG$num_f_yr   + M_NSFG$num_m_yr
+
+#Top code at 10
+M_NSFG$partners_y[
+  M_NSFG$partners_y>4
+  ]                <- 4
+
+
+#ggplot(M_NSFG, aes(x=age, y=partners_y, color=behav)) +
+# scale_color_manual(name="Sexual Behavior Group", 
+#                     breaks=c("heterosexual", "homosexual", "Men and Women", "none"), 
+#                     values=c("Men and Women"="#d95f02", "homosexual"="#1b9e77", "none"="#e7298a", "heterosexual"="#7570b3"), na.translate=FALSE) +
+#  geom_jitter(width=0.3, height=0.3, alpha=0.03) + 
+#  theme_classic() +
+#   ylim(0,10) + 
+#   ggtitle("Number of Partners per Year by Age") +
+#  ylab("past year sex partners") + xlab("Age") +
+#    stat_summary(fun.data=mean_cl_normal) +
+#    geom_smooth(method='lm', se=FALSE)
+#
+
+
+```
+
+##Target Stats 1: Past Year Partners
+
+Report # of partners ever and in past year by age group. 
+
+```{r age_groups}
+
+
+#Create age groups 
+M_NSFG$age_group[M_NSFG$age>=15 & M_NSFG$age<=19]   <- "15-19"
+M_NSFG$age_group[M_NSFG$age>=20 & M_NSFG$age<=24]   <- "20-24"
+M_NSFG$age_group[M_NSFG$age>=25 & M_NSFG$age<=29]   <- "25-29"
+M_NSFG$age_group[M_NSFG$age>=30 & M_NSFG$age<=34]   <- "30-34"
+M_NSFG$age_group[M_NSFG$age>=35 & M_NSFG$age<=39]   <- "35-39"
+M_NSFG$age_group[M_NSFG$age>=40 & M_NSFG$age<=50]   <- "40-50"
+
+
+M_NSFG$partners_y                                   <- M_NSFG$num_f_yr   + M_NSFG$num_m_yr
+
+#Top code at 15
+M_NSFG$partners_y[
+  M_NSFG$partners_y>15]                             <- 15
+
+#Top code at 15
+M_NSFG$num_f_yr[
+  M_NSFG$num_f_yr>15]                               <- 15
+
+#Top code at 15
+M_NSFG$num_m_yr[
+  M_NSFG$num_m_yr>15]                               <- 15
+
+
+#Update  our survey design variable 
+nsfg_design        <- svydesign(id      = ~CASEID,
+                                strata  = ~strata,
+                                weights = ~WGT2011_2017,
+                                nest    = TRUE,
+                                data    = M_NSFG)
+
+
+  behav_by_age                                      <- svyby(~behav, by=~age_group, nsfg_design, svymean, na.rm=TRUE)
+  colnames(behav_by_age)                            <- c("Age", "Men and Women", "Men Only", "None", "Women Only")
+
+     (behav_by_age[,2:5]*100) %>%  
+      kable(digits=c(2,2,2,2)) %>%
+     kable_styling(bootstrap_options = c("condensed", full_width= F, position="center"))%>%
+     column_spec(1, bold = T) %>%
+     column_spec(4, color="#e7298a")  %>%
+     column_spec(3, color="#7570b3")  %>%
+     column_spec(2, color="#d95f02")  %>%
+     column_spec(5, color="#1b9e77")  %>%
+     add_header_above(c("Sexual Behavior Category by Age"=5))
+
+
+```
+
+```{r by_group_partners}
+#Report this with survey weights
+
+  het_byage        <- svyby(~partners_y + num_m_yr + num_f_yr + partners + num_m_ever + num_f_ever, 
+                            by=~age_group, subset(nsfg_design, behav=="Women Only"), 
+                     svymean, na.rm=TRUE, vartype =c("ci")) 
+
+  het_byage[1:5]%>%
+    kable(digits=(c(2,3))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:6, color="#1b9e77")
+
+
+  hom_byage        <- svyby(~partners_y + num_m_yr + num_f_yr + partners + num_m_ever + num_f_ever,  
+                            by=~age_group, subset(nsfg_design, behav=="Men Only"),   
+                            svymean, na.rm=TRUE, vartype =c("ci")) 
+  
+  hom_byage[1:5]%>%
+    kable(digits=(c(2,3))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:6, color="#7570b3")
+
+   bi_byage        <- svyby(~partners_y + num_m_yr + num_f_yr + partners + num_m_ever + num_f_ever,  
+                            by=~age_group, subset(nsfg_design, behav=="Men and Women"),    
+                            svymean, na.rm=TRUE, vartype =c("ci")) 
+   
+   bi_byage[1:5]%>%
+    kable(digits=(c(2,3))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:6, color="#d95f02")
+   
+het_byage$behav    <- "Women Only"
+hom_byage$behav    <- "Men Only"
+ bi_byage$behav    <- "Men and Women"
+ 
+ byage<- rbind(het_byage,hom_byage, bi_byage)
+
+ 
+ #Partners in Past Year by Age & Sexual Behavior Group 
+(p_behavior <-ggplot(byage, aes(x=age_group, y=partners, col=behav)) +
+ geom_point()+
+ geom_path(aes(group=behav))+
+ geom_pointrange(aes(x=age_group, ymin=ci_l.partners, ymax=ci_u.partners, col=behav))+
+ theme_classic() +
+      theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+  scale_color_manual(name="Sexual Behavior Group", 
+                     breaks=c("Men Only", "Women Only", "Men and Women"), 
+                     values=c("Men and Women"="#d95f02", "Women Only"="#1b9e77", "Men Only"="#7570b3"),
+                     na.translate=FALSE) +
+    ylim(0,45) + 
+  ggtitle("Mean Number of Sexual Partners: Behavior") +
+  ylab("Number of Partners") + xlab("Age Group"))
+ 
+ 
+#Partners in Past Year by Age & Sexual Behavior Group 
+(py_behavior <-ggplot(byage, aes(x=age_group, y=partners_y, col=behav)) +
+ geom_point()+
+ geom_path(aes(group=behav))+
+ geom_pointrange(aes(x=age_group, ymin=ci_l.partners_y, ymax=ci_u.partners_y, col=behav))+
+ theme_classic() +
+      theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+  scale_color_manual(name="Sexual Partners", 
+                     breaks=c("Men Only", "Women Only", "Men and Women"), 
+                     values=c("Men and Women"="#d95f02", "Women Only"="#1b9e77", "Men Only"="#7570b3"),
+                     na.translate=FALSE) +
+  ggtitle("Mean Number of Sexual Partners per Year: Behavior") +
+      ylim(0,8) + 
+  ylab("Number of Partners") + xlab("Age Group"))
+
+
+
+#M and F Partners in Past Year among bisexuals 
+(bi_graph <-  ggplot(bi_byage) +
+ geom_path(aes(x=age_group, y=num_m_yr, group=behav), linetype="dashed", col="#7570b3") +
+ geom_pointrange(aes(x=age_group, y=num_m_yr, ymin=ci_l.num_m_yr, ymax=ci_u.num_m_yr), col="#7570b3") +
+  geom_path(aes(x=age_group, y=num_f_yr, group=behav), linetype="dotted", col="#1b9e77") +
+ geom_pointrange(aes(x=age_group, y=num_f_yr, ymin=ci_l.num_f_yr, ymax=ci_u.num_f_yr), col="#1b9e77") +  
+ annotate(geom="text", x=1.5, y=0.9, label="Female Partners", color="#1b9e77", size=2.5) +
+ annotate(geom="text", x=1.8, y=3, label="Male Partners", color="#7570b3", size=2.5) +
+     theme_classic() +
+      theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+  scale_color_manual(name="Sexual Partners", 
+                     breaks=c("New Male Partners", "New Female Partners"), 
+                     na.translate=FALSE) +
+    ylim(0,4.0) + 
+  ggtitle("Mean Number of M/F Partners per Year 
+          (Bisexuals- Behavior)") +
+  ylab("Number of Partners") + xlab("Age Group"))
+
+ 
+ 
+#Save this - first create a workbook 
+wb_ts                <- createWorkbook()
+ 
+addWorksheet(wb_ts, "validation_out_M")
+
+writeData(wb_ts, sheet= "validation_out_M", byage)
+```
+
+Check how this compares to when we use self-reported orientation: 
+
+```{r bisexual_self}
+  orient_by_age <- svyby(~self_orient, by=~age_group, nsfg_design, svymean, na.rm=TRUE)
+  colnames(orient_by_age)<- c("Age", "Bisexual", "Heterosexual", "Homosexual")
+
+     (orient_by_age[,2:4]*100) %>%  
+      kable(digits=c(2,2,2,2)) %>%
+     kable_styling(bootstrap_options = c("condensed", full_width= F, position="center"))%>%
+     column_spec(1, bold = T) %>%
+     column_spec(4, color="#7570b3")  %>%
+     column_spec(3, color="#1b9e77")  %>%
+     column_spec(2, color="#d95f02")  %>%
+     add_header_above(c("Self-Reported Sexual Orientation by Age"=4))
+  
+```
+
+
+```{r by_orient_partners}  
+#Report this with survey weights
+
+  het_byage2 <- svyby(~partners_y + num_m_yr + num_f_yr + partners,  
+                      by=~age_group, subset(nsfg_design, self_orient=="heterosexual" & eversex=="YES"), 
+                      svymean, na.rm=TRUE, vartype =c("ci")) 
+
+  het_byage2[1:5]%>%
+    kable(digits=(c(2,3))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:6, color="#1b9e77")
+
+
+  hom_byage2 <- svyby(~partners_y + num_m_yr + num_f_yr + partners,  
+                      by=~age_group, 
+                      subset(nsfg_design, self_orient=="homosexual" & eversex=="YES"),   
+                      svymean, na.rm=TRUE, vartype =c("ci")) 
+  
+  hom_byage2[1:5]%>%
+    kable(digits=(c(2,3))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:6, color="#7570b3")
+
+   bi_byage2 <- svyby(~partners_y + num_m_yr + num_f_yr + partners,  
+                      by=~age_group, 
+                      subset(nsfg_design, self_orient=="bisexual" & eversex=="YES"),     
+                      svymean, na.rm=TRUE, vartype =c("ci")) 
+   
+   bi_byage2[1:5]%>%
+    kable(digits=(c(2,3))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:6, color="#d95f02")
+   
+het_byage2$self_orient    <- "heterosexual"
+hom_byage2$self_orient    <- "homosexual"
+ bi_byage2$self_orient    <- "bisexual"
+ 
+ byage2 <- rbind(het_byage2,hom_byage2, bi_byage2)
+ 
+
+ #Partners in Past Year by Age & Sexual Behavior Group 
+(p_orientation <- ggplot(byage2, aes(x=age_group, y=partners, col=self_orient)) +
+ geom_point()+
+ geom_path(aes(group=self_orient))+
+ geom_pointrange(aes(x=age_group, ymin=ci_l.partners, ymax=ci_u.partners, col=self_orient))+
+ theme_classic() +
+      theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+  scale_color_manual(name="Sexual Behavior Group", 
+                     breaks=c("heterosexual", "homosexual", "bisexual"), 
+                    values=c("bisexual"="#d95f02", "heterosexual"="#1b9e77", "homosexual"="#7570b3"),
+                     na.translate=FALSE) +
+      ylim(0,45) + 
+  ggtitle("Mean Number of Sexual Partners: Orientation") +
+  ylab("Number of Partners") + xlab("Age Group"))
+
+ 
+  
+#Partners in Past Year by Age & Sexual Behavior Group 
+(py_orientation <- ggplot(byage2, aes(x=age_group, y=partners_y, col=self_orient)) +
+ geom_point()+
+ geom_path(aes(group=self_orient))+
+ geom_pointrange(aes(x=age_group, ymin=ci_l.partners_y, ymax=ci_u.partners_y, col=self_orient))+
+ theme_classic() +
+      theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+  scale_color_manual(name="Sexual Behavior Group", 
+                     breaks=c("heterosexual", "homosexual", "bisexual"), 
+                     values=c("bisexual"="#d95f02", "homosexual"="#1b9e77", "heterosexual"="#7570b3"),
+                     na.translate=FALSE) +
+  ggtitle("Mean Number of Partners per Year: Orientation") +
+      ylim(0,8) + 
+  ylab("Number of Partners") + xlab("Age Group"))
+
+
+
+#M and F Partners in Past Year among bisexuals 
+(bi_graph2 <-  ggplot(bi_byage2) +
+ geom_path(aes(x=age_group, y=num_m_yr, group=self_orient), linetype="dashed", col="#7570b3") +
+ geom_pointrange(aes(x=age_group, y=num_m_yr, ymin=ci_l.num_m_yr, ymax=ci_u.num_m_yr), col="#7570b3") +
+  geom_path(aes(x=age_group, y=num_f_yr, group=self_orient), linetype="dotted", col="#1b9e77") +
+ geom_pointrange(aes(x=age_group, y=num_f_yr, ymin=ci_l.num_f_yr, ymax=ci_u.num_f_yr), col="#1b9e77") +  
+ annotate(geom="text", x=1.8, y=2.2, label="Female Partners", color="#1b9e77", size=2.5) +
+ annotate(geom="text", x=1.8, y=0.2, label="Male Partners", color="#7570b3", size=2.5) +
+     theme_classic() +
+  theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+  ggtitle("Mean Number of M/F Partners per Year
+          (Bisexuals- Orientation)") +
+      ylim(-1,4) + 
+  ylab("Number of Partners") + xlab("Age Group"))
+
+
+```
+
+Combine and Compare
+
+```{r combine, fig.height =10, fig.width = 8, fig.align = "center"}
+
+p_men <- ggarrange(p_behavior, p_orientation, py_behavior, py_orientation, bi_graph, bi_graph2, 
+                   labels = c("A1", "A2", "B1", "B2", "C1", "C2"),
+                    ncol = 2, 
+                    nrow = 3, 
+                    common.legend=TRUE, 
+                    legend="bottom")
+
+(p_men <-   annotate_figure(p_men,
+               top = text_grob("Sexual Partner Change Among Sexually Active Men" , color = "Black", face = "bold", size = 14)))
+               
+ggexport(p_men, width=8, height=10, filename="./compare_NSFG_M.pdf")
+
+```
+
+
+```{r age_by}
+
+#correct these to remove any missing
+M_NSFG$age_first[M_NSFG$age_first>90]  <- NA
+M_NSFG$age_same[M_NSFG$age_same>90]    <- NA
+
+#Bottom-code age, no one can have sex before 8 years of age in my sample
+M_NSFG$age_first[M_NSFG$age_first<10]  <- 8
+M_NSFG$age_same[M_NSFG$age_same<10]    <- 8
+
+M_NSFG$age_first_behav                                <- 99
+
+#Create a new variable that divides this by behavior
+M_NSFG$age_first_behav[
+  M_NSFG$behav=="Women Only" 
+         & !is.na(M_NSFG$behav)]       <- M_NSFG$age_first[M_NSFG$behav=="Women Only" & !is.na(M_NSFG$behav)]
+M_NSFG$age_first_behav[
+  M_NSFG$behav=="Men Only" 
+          & !is.na(M_NSFG$behav)]      <- M_NSFG$age_same[M_NSFG$behav=="Men Only"  & !is.na(M_NSFG$behav)] 
+
+#Pick which is earlier for bisexual individuals 
+M_NSFG$age_lower                       <- pmin(M_NSFG$age_first, M_NSFG$age_same)
+
+M_NSFG$age_first_behav[
+  M_NSFG$behav=="Men and Women"
+            & !is.na(M_NSFG$behav)]    <- M_NSFG$age_lower[ M_NSFG$behav=="Men and Women"  & !is.na(M_NSFG$behav)]
+
+  #Create our survey design variable 
+nsfg_design        <- svydesign(id      = ~CASEID,
+                                strata  = ~strata,
+                                weights = ~WGT2011_2017,
+                                nest    = TRUE,
+                                data    = M_NSFG)
+
+ first_by_behav <- svyby(~age_first_behav ,  by=~behav, 
+                      subset(nsfg_design, eversex=="YES"), 
+                      svymean, na.rm=TRUE, vartype =c("ci", "se")) 
+
+
+ first_by_behav <- svyby(~age_first_behav ,  by=~behav, 
+                      subset(nsfg_design, eversex=="YES" & age_first<90), 
+                      svymean, na.rm=TRUE, vartype =c("ci")) 
+
+ 
+hist(M_NSFG$age_first_behav[M_NSFG$behav2=="MSM"])
+summary(M_NSFG$age_first_behav[M_NSFG$behav2=="MSM"])
+
+(first_m      <- 
+  ggplot() + 
+  geom_bar(aes(y=first_by_behav$age_first_behav, x=first_by_behav$behav, fill=first_by_behav$behav), 
+           stat="identity",  color="black") +
+          ylim(0,20) +
+           ylab("Age at first sexual experience") + xlab(NULL) +
+   geom_errorbar(aes(x=first_by_behav$behav, ymin=first_by_behav$ci_l, ymax=first_by_behav$ci_u), width=.05) +
+            scale_fill_manual(name=NULL, 
+                     values=c("Men and Women"="#d95f02", "Men Only"="#7570b3", "none"="#e7298a", "Women Only"="#1b9e77")) +
+               theme(legend.position=NULL, 
+         legend.box = "vertical", 
+         panel.background = element_rect(fill = NA),) + 
+         ggtitle("Age at First Sex: Men by Sexual Behavior Category"))
+
+
+(first_m2      <- 
+  ggplot() + 
+  geom_point(aes(y=first_by_behav$age_first_behav, x=first_by_behav$behav, color=first_by_behav$behav), 
+           stat="identity", size=2) +
+           ylab("Age at first sexual experience") + xlab(NULL) +
+   geom_errorbar(aes(x=first_by_behav$behav, ymin=first_by_behav$ci_l, ymax=first_by_behav$ci_u , color=first_by_behav$behav), width=.1, size=1.0) +
+    ylim(12, 22) +
+            scale_color_manual(name=NULL, 
+                    values=c("Men and Women"="#d95f02", "Men Only"="#7570b3", "none"="#e7298a", "Women Only"="#1b9e77")) +
+               theme(legend.position=NULL, 
+         legend.box = "vertical", 
+         panel.background = element_rect(fill = NA),) + 
+         ggtitle("Age at First Sex: Men by Sexual Behavior Category"))
+
+
+### FOR MSM ###
+ first_by_behav2 <- svyby(~age_same ,  by=~behav2, 
+                      subset(nsfg_design, eversex=="YES"), 
+                      svymean, na.rm=TRUE, vartype =c("ci", "se")) 
+ 
+ hist(M_NSFG$age_first[M_NSFG$behav2=="MSM"], main=("MSM age of first sex"), xlab = "Age", breaks=8)
+  hist(M_NSFG$age_same[M_NSFG$behav2=="MSM"], main=("MSM age of first same sex encounter"), xlab = "Age")
+  
+```
+
+##Target Stats 1- Duration
+
+  We use the variable "PCURRNT" which reports whether you identify your most recent partner as a current partner. For those who have only ever had one sexual partner, they did not get asked this question, so we instead identify whether their first partner is still an ongoing sexual partner. 
+  
+  We then use the computed *duration* variable that gives us the length of the relationship. We restrict to only current relationships using report of each. (We check our own count against count and they match)
+  
+  We then also create a variable that indicates the duration by mean degree (are people in multiple concurrent relationships in shorter relationships on average). For those in multiple relationships, we average the length of all ongoing relationships. 
+  
+  
+```{r duration1}
+
+# # # # # # # # # # Duration # # # # # # # # # # 
+
+M_NSFG$current_p_recent[
+  M_NSFG$current_p_rel=="CURRENT WIFE, NOT SEPARATED" | 
+  M_NSFG$current_p_rel=="CURRENT COHABITING PARTNER"]             <-  "YES"
+
+
+#One time partnerships are labeled as 997- I want to make a new variable to capture these and then set them to NA
+M_NSFG$lastp_onetime         <- 
+M_NSFG$twop_onetime          <- 
+M_NSFG$threep_onetime        <- 
+M_NSFG$count                 <- 0 
+
+# # # # # Most recent partnership # # # # # 
+
+M_NSFG$lastp_onetime[
+  M_NSFG$duration_1==997]    <- 1
+
+#Replace the 997s
+M_NSFG$duration_1[
+  M_NSFG$duration_1==997]    <- NA
+
+
+#Drop anyone who claims to have started a sexual relationship before 10 years of age 
+M_NSFG$duration_1[
+  (M_NSFG$age-(M_NSFG$duration_1/12))<=10
+  ]                                   <- NA
+
+
+#Create new variable which we'll change to define only current relationships 
+M_NSFG$duration_1c                     <- M_NSFG$duration_1
+
+
+#Remove if we don't know whether this is a current relationship
+M_NSFG$duration_1c[
+  is.na(M_NSFG$current_p_recent)
+  ]                                    <-NA     
+
+
+#Remove if it is defintely not a current relationship
+M_NSFG$duration_1c[
+  M_NSFG$current_p_recent=="NO"]       <-NA     
+
+
+M_NSFG$current_p_recent[is.na(
+  M_NSFG$current_p_recent)]            <-  "NO"
+
+
+M_NSFG$count[M_NSFG$current_p_recent=="YES"]        <-  M_NSFG$count[M_NSFG$current_p_recent=="YES"] + 1 
+
+```
+
+
+```{r duration2}
+
+M_NSFG$twop_onetime[
+  M_NSFG$duration_2==997]    <- 1
+
+#Replace the 997s
+M_NSFG$duration_2[
+  M_NSFG$duration_2==997]    <- NA
+
+#Drop anyone who claims to have started a sexual relationship before 10 years of age 
+M_NSFG$duration_2[
+  (M_NSFG$age-(M_NSFG$duration_2/12))<=10
+  ]                          <- NA
+
+
+#Create new variable which we'll change to define only current relationships 
+M_NSFG$duration_2c            <- M_NSFG$duration_2
+
+  
+#Remove if we don't know whether this is a current relationship
+M_NSFG$duration_2c[
+  is.na(M_NSFG$current_p2)
+  ]                          <-NA     
+
+#Remove if it is defintely not a current relationship
+M_NSFG$duration_2c[
+  M_NSFG$current_p2=="NO"
+  ]                          <-NA    
+
+M_NSFG$current_p2[is.na(M_NSFG$current_p2)]     <-  "NO"
+M_NSFG$count[M_NSFG$current_p2=="YES"]          <-  M_NSFG$count[M_NSFG$current_p2=="YES"] + 1 
+
+```
+
+```{r duration3}
+## # # # # Third partnership # # # # # 
+
+M_NSFG$threep_onetime[
+  M_NSFG$duration_3==997]    <- 1
+
+#Replace the 997s
+M_NSFG$duration_3[
+  M_NSFG$duration_3==997]    <- NA
+
+
+#Drop anyone who claims to have started a sexual relationship before 10 years of age 
+M_NSFG$duration_3[
+  (M_NSFG$age-(M_NSFG$duration_3/12))<=10
+  ]                          <- NA
+
+
+#Create new variable which we'll change to define only current relationships 
+M_NSFG$duration_3c            <- M_NSFG$duration_3
+
+  
+#Remove if we don't know whether this is a current relationship
+M_NSFG$duration_3c[
+  is.na(M_NSFG$current_p3)
+  ]                          <-NA     
+
+#Remove if it is defintely not a current relationship
+M_NSFG$duration_3c[
+  M_NSFG$current_p3=="No"
+  ]                          <-NA    
+
+
+M_NSFG$current_p3[is.na(M_NSFG$current_p3)]     <-  "NO"
+M_NSFG$count[M_NSFG$current_p3=="YES"]          <-  M_NSFG$count[M_NSFG$current_p3=="YES"] + 1 
+
+
+# # # # # # # # # # Duration by Mean Degree # # # # # # # # # # # # # # # # # # # # 
+
+
+M_NSFG$duration_1c[
+  is.na(M_NSFG$duration_1c)]          <-0 
+M_NSFG$duration_2c[
+  is.na(M_NSFG$duration_2c)]          <-0 
+M_NSFG$duration_3c[
+  is.na(M_NSFG$duration_3c)]          <-0   
+
+
+M_NSFG$avg_dur[
+  M_NSFG$count==0]                    <- 0
+
+M_NSFG$avg_dur[M_NSFG$count>0]               <- (M_NSFG$duration_1c[M_NSFG$count>0]  + 
+                                                 M_NSFG$duration_2c[M_NSFG$count>0]   + 
+                                                 M_NSFG$duration_3c[M_NSFG$count>0] ) / M_NSFG$count[M_NSFG$count>0]
+
+#We are going to combine 2 and 3
+ M_NSFG$count[M_NSFG$count==3]         <- 2
+ 
+ggplot() + 
+    geom_point(aes(y=M_NSFG$avg_dur/12, x=M_NSFG$age, color=M_NSFG$count))
+
+
+
+#Update  our survey design variable 
+nsfg_design                  <- svydesign(id     = ~CASEID,
+                                         strata  = ~strata,
+                                         weights = ~WGT2011_2017,
+                                         nest    = TRUE,
+                                         data    = M_NSFG)
+
+```
+Graph of duration by sexual behavior & concurrency
+
+```{r duration_M_by_behav}
+
+
+het_duration             <- svyby(~duration_1c, by=~~count + age_group, 
+                              subset(nsfg_design, behav=="Women Only"),
+                              svymean, na.rm=TRUE, vartype =c("ci"))
+      
+het_duration[1:4]%>%
+  kable(digits=(c(2))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:5, color="#1b9e77")
+                      
+                      
+bi_duration             <- svyby(~duration_1c,  by=~~count + age_group, 
+                            subset(nsfg_design, behav=="Men and Women"),
+                            svymean, na.rm=TRUE, vartype =c("ci")) 
+                  
+bi_duration[1:4]%>%
+  kable(digits=(c(2))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:5, color="#d95f02")
+   
+
+het_duration$behav      <- "Women Only"
+bi_duration$behav       <- "Men and Women"
+
+ 
+ byage_dur              <- rbind(het_duration,bi_duration)
+
+  byage_dur1 <-    byage_dur[which(byage_dur$count==1),]                
+  byage_dur2 <-    byage_dur[which(byage_dur$count==2),]                
+
+ #Partners in Past Year by Age & Sexual Behavior Group 
+(d_behavior <- ggplot(byage_dur1, aes(x=age_group, 
+                                     y=duration_1c/12, 
+                                     col=behav)) +
+ geom_point()  +
+ geom_path(aes(group=behav))+
+ geom_pointrange(aes(x=age_group, 
+                       ymin=ci_l/12, 
+                      ymax=ci_u/12, col=behav)) +
+      theme_classic() +
+      theme(panel.background = element_rect(fill = NA),
+      plot.title = element_text(size = 10, face = "bold")) +
+      scale_color_manual(name="Sexual Behavior Group", 
+                     breaks=c("Women Only", "Men and Women"), 
+                     values=c("Women Only"="#1b9e77", "Men and Women"="#d95f02"),
+                     na.translate=FALSE) +
+       ggtitle("Mean Relationship Duration by Sexual Behavior (1 Partner)") +
+       ylab("Relationship Duration (Years)") + 
+       xlab("Age Group"))
+  
+  
+  (d_behavior <- 
+      ggplot(byage_dur2, 
+             aes(x=age_group, y=duration_1c/12, col=behav)) +
+               geom_point()  +
+               geom_path(aes(group=behav))+
+               geom_pointrange(aes(x=age_group, 
+                                     ymin=ci_l/12, 
+                                    ymax=ci_u/12, col=behav)) +
+                    theme_classic() +
+                    theme(panel.background = element_rect(fill = NA),
+                    plot.title = element_text(size = 10, face = "bold")) +
+                    scale_color_manual(name="Sexual Behavior Group", 
+                                   breaks=c("Women Only", "Men and Women"), 
+                                   values=c("Women Only"="#1b9e77", "Men and Women"="#d95f02"),
+                                   na.translate=FALSE) +
+                     ggtitle("Mean Relationship Duration by Sexual Behavior (2+ Partners)") +
+                     ylab("Relationship Duration (Years)") + 
+                     xlab("Age Group"))
+              
+  
+ #Partners in Past Year by Age & Sexual Behavior Group 
+#(d_behavior <- ggplot(byage_dur, aes(x=byage_dur$age_group[byage_dur$count==1], 
+#                                     y=byage_dur$duration_1c[byage_dur$count==1]/12, 
+#                                     col=byage_dur$behav[byage_dur$count==1])) +
+# geom_point()  +
+# geom_path(aes(group=behav))+
+# geom_pointrange(aes(x=age_group[byage_dur$count==1], 
+#                       ymin=ci_l[byage_dur$count==1]/12, 
+#                      ymax=ci_u[byage_dur$count==1]/12, col=behav)) +
+#      theme_classic() +
+#      theme(panel.background = element_rect(fill = NA),
+#      plot.title = element_text(size = 10, face = "bold")) +
+#      scale_color_manual(name="Sexual Behavior Group", 
+#                     breaks=c("Men Only", "Men and Women"), 
+#                     values=c("Men Only"="#7570b3", "Men and Women"="#d95f02"),
+#                     na.translate=FALSE) +
+#       ggtitle("Mean Relationship Duration by Sexual Behavior") +
+#       ylab("Relationship Duration (Years)") + 
+#       xlab("Age Group"))
+
+
+#addWorksheet(wb_ts, "duration_out_M")
+
+#writeData(wb_ts, sheet= "duration_out_M", byage_dur)
+
+
+```
+
+```{r duration msm}
+
+msm_duration             <- svyby(~duration_1c, by=~~count, 
+                              subset(nsfg_design, behav2=="MSM"),
+                              svymean, na.rm=TRUE, vartype =c("ci"))
+      
+msm_duration[1:4]%>%
+  kable(digits=(c(2))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:5, color="#1b9e77")
+                      
+                      
+msw_duration             <- svyby(~duration_1c, by=~~count, 
+                              subset(nsfg_design, behav2=="MSW"),
+                              svymean, na.rm=TRUE, vartype =c("ci"))
+      
+msw_duration[1:4]%>%
+  kable(digits=(c(2))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:5, color="#1b9e77")
+                      
+  
+
+```
+
+##Target Stats 2- Concurrency/Mean Degree
+
+Above we identified one time partnerships and created a count variable here we report precent of relationships that are concurrent by sexual behavior. 
+
+```{r concurrency}
+
+het_curr    <- prop.table(svytable(~count + age_group, 
+                      subset(nsfg_design, behav=="Women Only")),2)
+
+het_curr%>%
+    kable(digits=(c(2))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:7, color="#1b9e77")
+                      
+het_curr_df   <- data_frame("O partners"=het_curr[1,], 
+                            "1 partner" =het_curr[2,],
+                            "2+ partners"=het_curr[3,], 
+                            "age group"= c("15-19", "20-24", "25-29", "30-34", "35-39", "40-50"), 
+                            "behav"="Women Only")
+
+           
+bi_curr    <- prop.table(svytable(~count + age_group, 
+                      subset(nsfg_design, behav=="Men and Women")),2)           
+
+bi_curr%>%
+    kable(digits=(c(2))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:7, color="#d95f02")
+
+bi_curr_df   <- data_frame("O partners"=bi_curr[1,], 
+                           "1 partner" =bi_curr[2,],
+                          "2+ partners"=bi_curr[3,], 
+                            "age group"=c("15-19", "20-24", "25-29", "30-34", "35-39", "40-50"), 
+                         "behav"="Men and Women")
+
+curr_all     <- rbind(het_curr_df, bi_curr_df)
+
+
+addWorksheet(wb_ts, "meandeg_out_F")
+
+writeData(wb_ts, sheet= "meandeg_out_F", curr_all)             
+
+            
+```
+
+```{r annual meandeg}
+
+  M_NSFG$annual_md           <- "0" 
+  M_NSFG$annual_md[
+    M_NSFG$partners_y==1]    <- "1" 
+  M_NSFG$annual_md[
+    M_NSFG$partners_y>1]     <- "2+"
+  
+  
+  conversion_factor          <- prop.table(table(M_NSFG$annual_md[M_NSFG$behav=="Women Only"],
+                                                  M_NSFG$count[M_NSFG$behav=="Women Only"]), 1)
+  
+  
+  
+  #Update  our survey design variable 
+      nsfg_design            <- svydesign(id      = ~CASEID,
+                                          strata  = ~strata,
+                                          weights = ~WGT2011_2017,
+                                          nest    = TRUE,
+                                          data    = M_NSFG)
+          
+    
+      t(conversion_factor)%*%((as.matrix((svymean(~as.factor(annual_md), 
+      subset(nsfg_design, behav=="Women Only"), na.rm=TRUE, estimates.only=TRUE ))))*100) %>%
+     kable(digits=c(2,3)) %>%
+     kable_styling(bootstrap_options = c("condensed", full_width= F, position="center"))%>%
+     column_spec(1, bold = T) %>%
+     row_spec(1:3, color="#1b9e77") 
+      
+  
+  
+       t(conversion_factor)%*%((as.matrix((svymean(~as.factor(annual_md), 
+      subset(nsfg_design, behav=="Men Only"), na.rm=TRUE, estimates.only=TRUE ))))*100) %>%
+     kable(digits=c(2,3)) %>%
+     kable_styling(bootstrap_options = c("condensed", full_width= F, position="center"))%>%
+     column_spec(1, bold = T) %>%
+     row_spec(1:3, color="#7570b3") 
+      
+  
+  
+      t(conversion_factor)%*% ((as.matrix((svymean(~as.factor(annual_md), 
+      subset(nsfg_design, behav=="Men and Women"), na.rm=TRUE, estimates.only=TRUE ))))*100) %>%
+     kable(digits=c(2,3)) %>%
+     kable_styling(bootstrap_options = c("condensed", full_width= F, position="center"))%>%
+     column_spec(1, bold = T) %>%
+     row_spec(1:3, color="#d95f02") 
+      
+      
+      
+      
+      msm_mean_deg <- t(conversion_factor)%*% ((as.matrix((svymean(~as.factor(annual_md), 
+      subset(nsfg_design, behav2=="MSM"), na.rm=TRUE, estimates.only=TRUE ))))*100) 
+      
+      
+      
+     msm_mean_deg %>%
+     kable(digits=c(2,3)) %>%
+     kable_styling(bootstrap_options = c("condensed", full_width= F, position="center"))%>%
+     column_spec(1, bold = T) %>%
+     row_spec(1:3, color="#7570b3") 
+      
+      
+      msw_mean_deg <- t(conversion_factor)%*% ((as.matrix((svymean(~as.factor(annual_md), 
+      subset(nsfg_design, behav2=="MSW"), na.rm=TRUE, estimates.only=TRUE ))))*100) 
+      
+      
+     msw_mean_deg %>%
+     kable(digits=c(2,3)) %>%
+     kable_styling(bootstrap_options = c("condensed", full_width= F, position="center"))%>%
+     column_spec(1, bold = T) %>%
+     row_spec(1:3, color="#1b9e77") 
+      
+      
+```
+
+
+
+##Target Stats 3- One-time partnerships
+
+We get a report of whether participants had any one-time partnerships during the year, and report this by 
+
+```{r one_time}
+
+#table(M_NSFG$twop_onetime)
+#table(M_NSFG$threep_onetime)
+
+M_NSFG$any_onetime           <- 0
+
+M_NSFG$any_onetime[
+  M_NSFG$lastp_onetime==1 | 
+  M_NSFG$twop_onetime==1  | 
+  M_NSFG$threep_onetime==1]  <- 1
+
+table(M_NSFG$any_onetime, M_NSFG$lastp_onetime, useNA="ifany")   #247 for most recent
+table(M_NSFG$any_onetime, M_NSFG$twop_onetime, useNA="ifany")    #103 for second-most recent
+table(M_NSFG$any_onetime, M_NSFG$threep_onetime, useNA="ifany")  #37 for third-most recent 
+
+
+M_NSFG$num_onetime           <-  (M_NSFG$lastp_onetime +  M_NSFG$twop_onetime +  M_NSFG$threep_onetime)
+table(M_NSFG$num_onetime)  #The majority of people only had 1 one-time partners but some had 2 or 3. 
+
+#Update  our survey design variable 
+nsfg_design                  <- svydesign(id      = ~CASEID,
+                                         strata  = ~strata,
+                                         weights = ~WGT2011_2017,
+                                         nest    = TRUE,
+                                         data    = M_NSFG)
+
+table(M_NSFG$any_onetime, M_NSFG$age_group, useNA="ifany")
+prop.table(table(M_NSFG$any_onetime, M_NSFG$age_group, useNA="ifany"), 2)
+#table(M_NSFG$any_onetime, M_NSFG$age_group, M_NSFG$behav)
+
+
+het_onetime            <- svyby(~any_onetime,  by=~age_group, 
+                          subset(nsfg_design, behav=="Women Only"),
+                          svymean, na.rm=TRUE, vartype =c("ci"))
+
+het_onetime[1:4]%>%
+    kable(digits=(c(2))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:5, color="#7570b3")
+                      
+                      
+bi_onetime             <- svyby(~any_onetime,  by=~age_group , 
+                          subset(nsfg_design, behav=="Men and Women"),
+                          svymean, na.rm=TRUE, vartype =c("ci")) 
+
+  
+          
+bi_onetime[1:4]%>%
+    kable(digits=(c(2))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+  column_spec(1, bold = T) %>%
+  column_spec(2:5, color="#d95f02")
+   
+het_onetime$behav      <- "Women Only"
+ bi_onetime$behav      <- "Men and Women"
+
+ byage_onetime         <- rbind(het_onetime,bi_onetime)
+ 
+                      
+                      
+
+ #Partners in Past Year by Age & Sexual Behavior Group 
+(d_behavior           <- ggplot(byage_onetime, aes(x=age_group, y=any_onetime, col=behav)) +
+ geom_point()  +
+ geom_path(aes(group=behav))+
+ geom_pointrange(aes(x=age_group, ymin=ci_l, ymax=ci_u, col=behav)) +
+ theme_classic() +
+       ylim(-0.02,0.5) +
+      theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+  scale_color_manual(name="Sexual Behavior Group", 
+                     breaks=c("Women Only", "Men and Women"), 
+                     values=c("Women Only"="#1b9e77", "Men and Women"="#d95f02"),
+                     na.translate=FALSE) +
+  ggtitle("Percent with past year one-time partnerships") +
+  ylab("Percent with one-time relationship in past year") + xlab("Age Group"))
+ 
+ 
+
+ onetime_mean         <- svyby(~any_onetime,  by=~count, 
+                          nsfg_design,
+                          svymean, na.rm=TRUE, vartype =c("ci")) 
+ 
+  #Partners in Past Year by Age & Sexual Behavior Group 
+(d_behavior           <- ggplot(onetime_mean, aes(x=count, y=any_onetime)) +
+ geom_point()  +
+ geom_path(aes(group=as.factor(count))) +
+ geom_pointrange(aes(x=count, ymin=ci_l, ymax=ci_u, col=as.factor(count))) +
+ theme_classic() +
+      theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+  ggtitle("Percent with past year one-time partnerships") +
+  ylab("Percent with one-time relationship in past year") + xlab("Number Current"))
+
+
+ addWorksheet(wb_ts, "onetime_age_M")
+writeData(wb_ts, sheet= "onetime_age_M", byage_onetime)
+
+
+ addWorksheet(wb_ts, "onetime_degree_M")
+writeData(wb_ts, sheet= "onetime_degree_M", onetime_mean)
+
+
+```
+
+
+##Target Stats 4: Age Assortiveness
+
+We take the age of your current partner(s) and your own age and we compute the difference. 
+
+```{r age_difference}
+
+M_NSFG$p_recent_birth[M_NSFG$p_recent_birth>=2017] <- NA
+M_NSFG$p_recent_year[M_NSFG$p_recent_year>=2017] <- NA
+
+
+M_NSFG$pageat_p_recent      <- M_NSFG$p_recent_year - M_NSFG$p_recent_birth
+
+M_NSFG$ageat_p_recent[M_NSFG$ageat_p_recent>=97] <- NA
+M_NSFG$ageat_p_recent[M_NSFG$ageat_p_recent<=10] <- NA
+
+ggplot() + 
+    geom_jitter(aes(x=M_NSFG$pageat_p_recent, y=M_NSFG$ageat_p_recent, col=M_NSFG$behav)) + 
+    ylab("Man's Age") + 
+    xlab("Woman's Age") + 
+  geom_abline( intercept=0, slope=1, color="gray", linetype="dashed") + 
+   theme_classic() +
+      theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+   scale_color_manual(name="Sexual Behavior Group", 
+                     breaks=c("Men and Women", "Women Only", "Men Only", "none"), 
+                     values=c("Men and Women"="#d95f02", "Women Only"="#1b9e77", "Men Only"="#7570b3", "none"="gray"),
+                     na.translate=FALSE) +
+  ggtitle("Comparison of Age of Sexual Partners by Respondent age and sexual behavior")
+
+
+
+M_NSFG$abs_diff         <- abs(M_NSFG$ageat_p_recent- M_NSFG$pageat_p_recent)
+M_NSFG$sq_abs_diff      <- abs( sqrt(M_NSFG$ageat_p_recent) - sqrt(M_NSFG$pageat_p_recent))
+
+
+#Update  our survey design variable 
+nsfg_design                  <- svydesign(id      = ~CASEID,
+                                         strata  = ~strata,
+                                         weights = ~WGT2011_2017,
+                                         nest    = TRUE,
+                                         data    = M_NSFG)
+
+
+# # # # # Abs Diff # # # #
+
+het_absdiff            <- svyby(~abs_diff,  by=~age_group, 
+                          subset(nsfg_design, behav=="Women Only"),
+                          svymean, na.rm=TRUE, vartype =c("ci"))
+
+bi_absdiff             <- svyby(~abs_diff,  by=~age_group, 
+                          subset(nsfg_design, behav=="Men and Women"),
+                          svymean, na.rm=TRUE, vartype =c("ci"))
+
+het_absdiff$behav      <- "Women Only"
+ bi_absdiff$behav      <- "Men and Women"
+
+ abs_diff_byage        <- rbind(het_absdiff,bi_absdiff)
+ 
+ 
+ 
+ abs_diff_behav2     <- svyby(~abs_diff, by=~behav2, nsfg_design, svymean, na.rm=TRUE) 
+ 
+        
+  (d_abs_diff <- 
+      ggplot(abs_diff_byage, aes(x=age_group, y=abs_diff, col=behav)) +
+               geom_point()  +
+               geom_path(aes(group=behav))+
+               geom_pointrange(aes(x=age_group, 
+                                     ymin=ci_l, 
+                                    ymax=ci_u, col=behav)) +
+                    theme_classic() +
+                    theme(panel.background = element_rect(fill = NA),
+                    plot.title = element_text(size = 10, face = "bold")) +
+                    scale_color_manual(name="Sexual Behavior Group", 
+                                   breaks=c("Women Only", "Men and Women"), 
+                                   values=c("Women Only"="#7570b3", "Men and Women"="#d95f02"),
+                                   na.translate=FALSE) +
+                     ggtitle("Age Difference between sexual partners") +
+                     ylab("Absolute age difference (Years)") + 
+                     xlab("Age Group"))
+
+ 
+ addWorksheet(wb_ts, "age_assort")
+writeData(wb_ts, sheet= "age_assort", abs_diff_byage)
+
+#Save my workbook object to an excel file
+saveWorkbook(wb_ts, "./_2b_Outputs/target_stats_out_M.xlsx", overwrite = TRUE)
+ 
+#
+# svyby(~as.factor(yr_nonm_partner),  by=~age_group, 
+#                   subset(nsfg_design, behav=="Women Only"),
+#                      svymean, na.rm=TRUE, vartype =c("ci"))
+```
+
+
+###Input 5: Frequency
+
+```{r freq}
+
+M_NSFG$frequency[M_NSFG$frequency==999 |M_NSFG$frequency==998] <- NA
+
+
+#Update  our survey design variable 
+nsfg_design                   <- svydesign(id      = ~CASEID,
+                                         strata  = ~strata,
+                                         weights = ~WGT2011_2017,
+                                         nest    = TRUE,
+                                         data    = M_NSFG)
+
+
+behav2_freq                   <- svyby(~frequency, by=~behav2, nsfg_design, svymean, na.rm=TRUE) 
+
+
+behav2_freq %>%
+    kable(digits=(c(2))) %>%
+  kable_styling(bootstrap_options = c("condensed", full_width= F, position="center"))
+   
+
+#save(behav2_freq, msm_duration, msm_mean_deg, )
+```
+
+
+###Input 6: Position
+
+```{r position}
+
+M_NSFG$receptive_msm[M_NSFG$receptive_msm=="Not ascertained" |
+                       M_NSFG$receptive_msm=="Refused" |
+                       M_NSFG$receptive_msm=="Don't know"
+                     ]       <- NA
+
+
+
+M_NSFG$insertive_msm[M_NSFG$insertive_msm=="Not ascertained" |
+                       M_NSFG$insertive_msm=="Refused"|
+                       M_NSFG$insertive_msm=="Don't know"
+                     ]       <- NA
+
+M_NSFG$position              <- NA
+
+M_NSFG$position[
+ (M_NSFG$receptive_msm=="Yes" & 
+  M_NSFG$insertive_msm=="No")
+                     ]      <- "Receptive Only"
+
+M_NSFG$position[
+ (M_NSFG$receptive_msm=="No" & 
+  M_NSFG$insertive_msm=="Yes")
+                     ]      <- "Insertive Only"
+
+
+M_NSFG$position[
+ (M_NSFG$receptive_msm=="Yes" & 
+  M_NSFG$insertive_msm=="Yes")
+                     ]      <- "Versatile"
+
+#M_NSFG$position[
+# (M_NSFG$receptive_msm=="No" & 
+#  M_NSFG$insertive_msm=="No")
+#                     ]      <- "None"
+
+
+nsfg_design                  <- svydesign(id     = ~CASEID,
+                                         strata  = ~strata,
+                                         weights = ~WGT2011_2017,
+                                         nest    = TRUE,
+                                         data    = M_NSFG)
+
+position_by_behav           <- prop.table(svytable(~position + behav,
+                              subset(nsfg_design, behav2=="MSM")),2)
+
+ 
+position_MSM               <- prop.table(svytable(~position + behav2,
+                              subset(nsfg_design, behav2=="MSM")),2)
+
+
+```

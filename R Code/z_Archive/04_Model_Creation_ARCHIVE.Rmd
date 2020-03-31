@@ -1,0 +1,454 @@
+---
+title: "Model_Creation"
+author: "Jenny Spencer"
+date: "9/30/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+sessionInfo()
+
+rm(list=ls())
+
+library(EpiModel)   #the primary package we will be using to make our models 
+library(ndtv)       #for the fancy videos
+library(readxl)     #read in excel files 
+library(tidyverse)  #Includes a number of shortcuts for data manipulation
+library(ggplot2)    #for graphing
+library(beepr)      #beeps
+library(kableExtra)  #for making tables look nice
+
+```
+
+## Creating a Network
+
+This is for testing the mechanics around network creation with my bisexual model 
+
+First I want to create a network of 1000 people. Then I will give them attributes
+
+  1) Sex - M/F this will be 50/50 
+  
+  2) Sexual Behavior- this will be opposite sex, same sex, or bisexual and this distribution will vary by individual sex 
+      6% women bi, 2% women samesex, 92% women oppsex
+      2% men bi,   2% men samesex,   96% men oppsex      
+      
+  3) Age Distribution- Assumed to be equal by sex and sexual behavior
+      
+```{r network_initiatlize}
+
+# # # # Network Size and initialization # # # # # 
+
+#Create a nework of 50/50 men and women 
+n                  <- 20000
+
+#Create populations for each size of our groups
+n.msmo             <- n* 0.5 * 0.02
+n.msmw             <- n* 0.5 * 0.02
+n.mswo             <- n* 0.5 * 0.96
+n.wswo             <- n* 0.5 * 0.02
+n.wsmw             <- n* 0.5 * 0.06
+n.wsmo             <- n* 0.5 * 0.92
+
+
+
+#Network with n people, partnerships are not directed 
+net1              <- network.initialize(n, directed=FALSE)
+
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex",   c(rep("F", n/2), rep("M", n/2)))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+#and a more complex one 
+set.vertex.attribute(net1, "combo", c(rep("FM", n.wsmo), rep("FF", n.wswo ), rep("FB", n.wsmw),  #first for women
+                                      rep("MF", n.mswo), rep("MM", n.msmo) , rep("MB", n.msmw)))   # then for men
+
+# # # # # #  AGE   # # # # 
+
+#calc age dist 
+l.age              <- c( "<1", "1-4", "5-9", "10-14", "15-20", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49", "50-54", "55-59",   
+                         "60-64", "65-69", "70-74", "75-79",  "80-85", "85+")
+
+#make upper and lower limit variables- the actual age will be draw from a distribution within these so these will line up exactly. 
+ll.age             <- c( 0,   1,   5,   10,  15,  20,  25,  30,  35,  40,  45 , 50,   55,   60,   65,   70,   75,  80,  85)
+ul.age             <- c( 1,   5,   10,  15,  20,  25,  30,  35,  40,  45,  50,  55,   60,   65,   70,   75,   79,  85,  90)
+
+i.age_dist         <-c(.04, .05, .05, .06, .06, .06, .06, .07, .07, .07, .06, .06, .06, .06, .06, .04, .04, .02 ,.01) 
+
+
+#add age category
+set.vertex.attribute(net1, "age_group", c(rep(l.age, (n.wsmo*i.age_dist)), 
+                                          rep(l.age, (n.wswo*i.age_dist)),
+                                          rep(l.age, (n.wsmw*i.age_dist)),
+                                          rep(l.age, (n.mswo*i.age_dist)),
+                                          rep(l.age, (n.msmo*i.age_dist)),
+                                          rep(l.age, (n.msmw*i.age_dist))))
+
+#Three step process to add ages by year- 
+    #First define upper and lower bounds
+                 age_ll             <-  c(rep(ll.age, (n.wsmo*i.age_dist)), 
+                                          rep(ll.age, (n.wswo*i.age_dist)),
+                                          rep(ll.age, (n.wsmw*i.age_dist)),
+                                          rep(ll.age, (n.mswo*i.age_dist)),
+                                          rep(ll.age, (n.msmo*i.age_dist)),
+                                          rep(ll.age, (n.msmw*i.age_dist)))
+                 
+                 age_ul             <-  c(rep(ul.age, (n.wsmo*i.age_dist)), 
+                                          rep(ul.age, (n.wswo*i.age_dist)),
+                                          rep(ul.age, (n.wsmw*i.age_dist)),
+                                          rep(ul.age, (n.mswo*i.age_dist)),
+                                          rep(ul.age, (n.msmo*i.age_dist)),
+                                          rep(ul.age, (n.msmw*i.age_dist)))
+                 
+  
+                
+#Then draw n uniform distributions                                     
+draw_age           <- runif(n, min=0, max=1)
+age_yrs            <- draw_age
+
+matrix             <- matrix(c(get.vertex.attribute(net1, "age_group"), draw_age, age_ll, age_ul), ncol=4)
+
+#And rescale each to within the assigned bounds
+#If you get an error in this code, it may be because your probabilities don't add up to one. 
+for(i in 1:n) {
+      age_yrs[i]   <- scales::rescale(draw_age[i], to = c(age_ll[i], age_ul[i]), from = c(0, 1))
+}
+
+#Finally, add specific age (years) to attribute
+ set.vertex.attribute(net1, "age", round(age_yrs, 1)) 
+
+
+#Also create an age by sexual behavior category group 
+set.vertex.attribute(net1, "age_behav ", (paste((get.vertex.attribute(net1, "age_group" )), (get.vertex.attribute(net1, "combo" ))))) 
+
+#diss_base          <- c(0, 10.8, 27.2, 52.3, 88.1, 118.9, 162.7, 257.3, 363.6, 487.8, 629.7, 629.7)
+
+hist(get.vertex.attribute(net1, "age"))
+
+
+```
+
+
+Additional model functions
+
+Three additional modules are described here
+
+1) Births- new individuals are born into the population at **birth.rate** 
+
+2) Deaths- Individuals exit the population by age-specific **death.rate** 
+
+3) Aging- Each time step, individuals age one week. The aging calculation also updates age group. 
+
+```{r functions}
+
+
+d.lifetable        <- data.frame(read_excel("./_2a_Inputs/mortality.xlsx", sheet="Sheet1")) 
+
+mortality_rate_f   <- d.lifetable$Female
+mortality_rate_m   <- d.lifetable$Male
+
+# rate per person, per week
+mrf_pp_pw          <- mortality_rate_f / 1e5 / 12
+mrm_pp_pw          <- mortality_rate_m / 1e5 / 12
+
+# Build out a mortality rate vector
+
+age_spans          <-c(1,4,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5)
+mr_vec_f           <- rep(mrf_pp_pw, times = age_spans)
+mr_vec_m           <- rep(mrm_pp_pw, times = age_spans)
+
+mort_all           <- (data.frame(c(0:89), mr_vec_f, mr_vec_m))
+                        colnames(mort_all) <-  c("Age", "Female", "Male")
+
+
+```
+
+
+Then we create our target stats. The edges calculations are a little complex so these can be see in edges_calculations.xlsx in the inputs folder. This file outputs edges by sexual behavior combinations in the order that our equation expects them. We add the total number of edges here also. 
+
+```{r target_stats}
+
+edges              <- (n*.40)   
+
+#Then stats based on this- first edges total, the concurrent, then all possible combinations that should be impossible 
+#(ie, two men who only have sex with women can never have a partnership)
+# Impossible combinations: FB.FM, FF.FM, FM.FM, FF.MB, FF.MF, MB.MF, MF.MF, FB.MM, FF.MM, FM.MM, MF.MM
+
+targets            <- c( edges,     #total edges
+                        (n.wsmw*0.85),   #nodefactor- the number of WSMW nodes that appear in any edge (node var) 
+                        (n.wswo*0.73),   #nodefactor- the number of WSW nodes that appear in any edge (node var) 
+                        (n.msmo*0.66),   #nodefactor- the number of MSM nodes that appear in any edge (node var) 
+                        (n.msmw*0.59),   #nodefactor- the number of MSMW nodes that appear in any edge (node var) 
+                        (n*.013),        #concurrent nodes  
+                          0,             #nodemix FB x FM
+                          0,             #nodemix FF x FM
+                          0,             #nodemix FM x FM
+                          0,             #nodemix FF x MB
+                          0,             #nodemix FF x MF 
+                          0,             #nodemix MF x MF
+                          0,             #nodemix FB x MM
+                          0,             #nodemix FF x MM
+                          0,             #nodemix FB x FM
+                          0,             #nodemix FM x MM
+                          0)             #nodemix MF x MM
+                        #(5*(edges*.02)), (3.5*(edges*.968)),  (5*(edges*.012))) 
+```
+
+```{r model_fit}
+
+set.seed(041788)
+
+coef.diss          <- dissolution_coefs( dissolution = (~offset(edges)), # + offset(nodemix("combo", levels2=c(-13)))), 
+                                          duration  = c(95.0),# 45, 45, 45, 45, 45, 45, 45, 45, 45, 45, 
+                                                              #45, 45, 45, 45, 45, 45, 45, 45, 45, 45),     #Overall
+                                                   #     49.4,     #WSMW - 49.4
+                                                   #     55,       #WSW -55
+                                                   #     45,        #MSM -45
+                                                   #     58.1),    #MSMW - 58.1
+                                             d.rate = mean(mort_all$Male))
+
+
+ f.form            <- ~edges +  #nodefactor("combo", levels=c(1,2,4,6)) + 
+                               nodemix("combo", levels2=c(21))  #+    concurrent  
+
+#coef.diss          <- dissolution_coefs( dissolution = ~offset(edges),  #+ offset(nodefactor("combo", levels=c(1,2,4,6)))), 
+#                                           duration  = c(95.0),
+#                                          d.rate = mean(mort_all$Male))
+
+#f.form             <- ~edges 
+targets              <- c( edges,46  )	
+		
+	
+	
+	
+#Now make the formation model which is conditional on the dissolution model 
+
+fit1               <- netest(net1, 
+                            formation    = f.form, 
+                            target.stats = targets, 
+                            #edapprox     = FALSE,
+                            coef.diss    = coef.diss) 
+
+summary(fit1)
+
+  #dx.static     <- netdx(fit1, nsims = 1000, dynamic=FALSE)
+  #dx.static
+  
+  
+```
+
+## Simulate the Model
+
+Once the model is created we can run a simulation of it
+
+```{r simulate, echo=FALSE}
+set.seed(041788)
+
+#Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
+dx_sim             <- netdx(fit1, nsteps = (1000), nsims = 1, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                            nwstats.formula= ~edges +concurrent + nodemix("combo") + nodefactor("combo", levels=c(-5)))
+
+#show what happened as a table
+dx_sim$stats.table.formation
+
+#mcmc.diagnostics(fit1$fit) 
+```
+
+```{r}
+#we can also make fit graphs 
+plot(dx_sim, type  = "formation" )
+
+plot(dx_sim, type  = "duration")
+plot(dx_sim, stats = c("edges", "concurrent"))
+plot(dx_sim, stats = c("mix.combo.MM.MM", "mix.combo.MB.MM"))
+plot(dx_sim, stats = c("nodefactor.combo.FF", "nodefactor.combo.FB", "nodefactor.combo.MM", "nodefactor.combo.MB"))
+
+#Check it out
+tel_inf               <- data.frame(combo= get.vertex.attribute(net1, "combo"),ID= (get.vertex.attribute(net1, "vertex.names")))
+tel_dx                <- as.data.frame(dx_sim, sim = 1) 
+tel_dx$ID             <- tel_dx$tail
+together1             <- merge(tel_inf, tel_dx, by.y="ID")
+  
+tel_dx$ID             <- tel_dx$head
+together2             <- merge(tel_inf, tel_dx, by.y="ID")
+
+together              <-rbind(together1,together2)
+together$count        <- 1
+count_by_ID           <-aggregate(together[11], list(together$ID, together$combo), sum)
+count_by_behav        <-aggregate(count_by_ID[,3], list(count_by_ID$Group.2), mean)
+
+colnames(count_by_behav)            <- c("Sexual Behavior", "Total Partners")
+count_by_behav$TargetPartners        <- c(20.5, 6.0, 5.7, 17.9, 8.9, 12.9) 
+
+
+mean_by_behav                       <-aggregate(together[,9], list(together$combo), mean)
+colnames(mean_by_behav)             <- c("Sexual Behavior", "Duration_months")
+mean_by_behav$TargetMonths                <- c(49.4, 60, 95, 58.1, 95, 45) 
+
+out_stats                          <- merge(count_by_behav, mean_by_behav, by.y="Sexual Behavior")
+    
+
+    out_stats %>% 
+  kable(digits=c(1,1), escape = F) %>%
+          kable_styling(bootstrap_options = c("condensed", full_width= F, position="center")) %>%
+          column_spec(1, bold = T) %>%
+      
+          row_spec(1, color="#d95f02", bold=T)  %>%
+          row_spec(2, color="#1b9e77", bold=T)  %>%
+          row_spec(3, color="#7570b3", bold=T)  %>%
+          row_spec(4, color="#d95f02", bold=T)  %>%
+          row_spec(5, color="#1b9e77", bold=T)  %>%
+          row_spec(6, color="#7570b3", bold=T)  %>%
+     add_header_above(c("Fit Statistics Partnerships"=5))
+    
+    beep(1)
+    
+    
+    hist(together$duration, xlim=c(0,500), probability=TRUE)
+    hist(together$duration[together$combo=="MM"], xlim=c(0,500), probability=TRUE)
+    
+
+```
+
+```{r run_epidemic}
+
+source("4_Model_Functions.R")
+
+#Run a fake simulation just so we can see what this looks like
+ 
+ # Parameterizing an SIS epidemic
+ param             <- param.net( inf.prob = 0.4,
+                          mortality.rates = mort_all,
+                               birth.rate = mean(mort_all$Male), 
+                                 rec.rate = 0.003 )
+ 
+ 
+ # Initial conditions
+ init              <- init.net(i.num = n*.3)
+ 
+ # Control settings
+ control <- control.net(type = "SIS", 
+                       nsims = 1, 
+                       ncores= 8,
+                      nsteps = 20,  #(50*52), 
+               # arrivals.FUN = bfunc,
+              departures.FUN = dfunc,
+                   aging.FUN = aging,
+                     epi.FUN = epifunc, 
+              keep.tedgelist = TRUE, 
+               keep.tnetwork = TRUE,  #,
+               # delete.nodes = TRUE, 
+                      depend = TRUE,
+                     verbose = FALSE)
+
+ 
+# Run the network model simulation with netsim
+sim_short          <- netsim(fit1, param, init, control)
+
+```
+
+
+```{r graph_epidemic}
+behavior            <- get.vertex.attribute(sim_short$network$sim1, "combo")
+
+#sex.shape          <- ifelse(sex == "F", 4, 50)
+#plot(sim, type = "network", col.status = TRUE, at = 100, sims = 1)
+
+tel_sim             <- as.data.frame(sim_short$network$sim1) 
+tel_sim$ID          <- tel_sim$tail
+dim(tel_sim)
+
+age_out             <- matrix(c((get.vertex.attribute(sim_short$network$sim1, "age")), 
+                         (get.vertex.attribute(sim_short$network$sim1, "vertex.names"))), ncol=2)
+
+colnames(age_out)   <- c("Age", "ID")
+together            <- merge(age_out, tel_sim, by.y="ID")
+
+
+
+plot(x=tel_sim$onset, y=tel_sim$terminus)
+
+plot(sim_short)
+
+
+out_sim              <- as.data.frame(sim_short)
+
+keycol               <- "behave"
+valuecol             <- "prevalence"
+gathercols           <- c("prv.FF", "prv.FM", "prv.FB", "prv.MM", "prv.MF", "prv.MB")
+
+out_graph            <- out_sim    %>%
+                           gather("behave", "prevalence", gathercols) %>%
+                            filter(sim==1) %>%
+                           select("time", "behave", "prevalence", "sim") 
+
+
+out_graph$sex        <- "M"  
+out_graph$sex[out_graph$behave=="prv.FB" |
+              out_graph$behave=="prv.FF" |
+              out_graph$behave=="prv.FM"]        <- "F"  
+
+
+
+out_graph$orient    <- "Men Only"  
+out_graph$orient[out_graph$behave=="prv.FF" |
+              out_graph$behave=="prv.MF" ]       <- "Women Only"  
+  
+out_graph$orient[out_graph$behave=="prv.FB" |
+              out_graph$behave=="prv.MB" ]       <- "Both"  
+
+ggplot(data=out_graph) +
+    geom_line(aes( y=prevalence, x=time, col=orient, linetype=sex)) + 
+   theme_classic() +
+      theme(panel.background = element_rect(fill = NA),
+        plot.title = element_text(size = 10, face = "bold")) +
+  scale_color_manual(name="Sexual Behavior", 
+                     values=c("Both"="#d95f02", "Women Only"="#1b9e77", "Men Only"="#7570b3"),
+                     na.translate=FALSE) +
+  ggtitle("HPV Prevalence: Sexual Behavior") +
+  ylab("Prevalence of HPV") + xlab("Time")
+
+
+
+beep(1)
+```
+
+
+```{r movie}
+
+# nw                 <- get_network(sim1)
+# nw                 <- color_tea(nw, verbose = FALSE)
+
+# slice.par          <- list(start = 1, end = 50, interval = 1,
+#                             aggregate.dur = 1, rule = "any")
+# render.par         <- list(tween.frames = 10, show.time = FALSE)
+# plot.par           <- list(mar = c(0, 0, 0, 0))
+
+#compute.animation(nw, slice.par = slice.par, verbose = TRUE)
+
+#sex                <- get.vertex.attribute(nw, "sex")
+#sex.shape          <- ifelse(sex == "F", 4, 50)
+
+#behav              <- get.vertex.attribute(nw, "behav")
+#behav.col           <- ifelse(behav == "het", "#7570b3", (ifelse(behav=="homo", "#1b9e77", "#d95f02")))
+
+
+#render.d3movie(
+#    nw,
+#    render.par = render.par,
+#    plot.par = plot.par,
+#    vertex.sides = sex.shape,
+#    vertex.col = behav.col,
+#    edge.col = "black",
+#    vertex.border = "darkgray",
+#    displaylabels = FALSE)
+#    filename = paste0(getwd(), "/movie.html")
+
+#  #  saveVideo(ani.replay(),video.name="stergm.sim.1.mp4",
+#  #              other.opts="-b 5000k",clean=TRUE) #
+
+    
+```
+

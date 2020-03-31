@@ -1,0 +1,736 @@
+---
+title: "Model_Creation"
+author: "Jenny Spencer"
+date: "9/30/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+sessionInfo()
+
+
+
+rm(list=ls())
+
+library(EpiModel)    #the primary package we will be using to make our models 
+library(ndtv)        #for the fancy videos
+library(readxl)      #read in excel files 
+library(tidyverse)   #Includes a number of shortcuts for data manipulation
+library(beepr)       #makes the code beep when you get to it. Beep. 
+library(kableExtra)  #for making tables look nice
+library(mc2d)        #for using pert distribution
+
+```
+
+## Pull in Data for Sexual Behavior
+Data for MSM comes largely from the National Survey of Family Growth (2011-2017). These data are cleaned & saved in the file *03.NSFG_cleaning_M.Rmd*. The final model inputs are saved in a list. 
+
+```{r inputs_sex_behavior}
+
+ load("./_2a_Inputs/msm_model_inputs.RData")
+
+#Mean relationship duration
+ msm_duration           <- msm_model_inputs$msm_duration$duration_1c
+ df.t.byage_median      <- msm_model_inputs$byage_iqr
+ df.t.byage_mean        <- msm_model_inputs$byage_mean
+ v.t.agefirst_msm       <- msm_model_inputs$t.msm_agefirst
+ df.mean_deg_msm        <- msm_model_inputs$msm_mean_deg
+ 
+#Also establish network size - any other model-wide variables 
+ n                       <- 500
+```
+
+
+## Creating a Network
+
+This is for testing the mechanics around network creation with my bisexual model 
+
+First I want to create a network of `n` people. Then I create attributed assigned to those in the network. So far my attributes are: 
+
+**sex**        Everyone is male in this model
+
+**active2**    This indicates whether the individual is still active (alive) in the model. Starts as 1 for everyone. 
+
+**position**   Men can have one of three positional preferences for sex "Exclusively Receptive", "Exclusively Insertive", or "Versatile" 
+
+**age**        Uses age distribution of the US
+
+**sex_active**  This is an indicator of whether an individual is sexually active (this keeps 4 YOs from having sex for example)
+
+**age_active**  This is the age at which sex_active should switch from 0 to 1. 
+
+I also create two variables that will store output from the model
+
+**p_total** Number of sex partners - this starts as 0 and the model counts up for every new partner
+
+**agefirst** The age at which an individual had their first sexual partner
+
+      
+```{r network_initiatlize}
+
+# # # # Network Size and initialization # # # # # 
+
+#Create populations for each size of our groups- for now everyone is MSM
+n.msmo                  <- n
+
+#Positional Preferences - !! Need to add code pulling this from NSFG also !! 
+pct.pos_r               <- .16   
+pct.pos_i               <- .28 
+pct.pos_v               <- .56 
+
+
+#Network with n people, partnerships are not directed 
+net1                    <- network.initialize(n, directed=FALSE)
+
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex",   c(rep("M", n)))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+
+#Add additional active counter
+set.vertex.attribute(net1, "active2",   c(rep(1, n)))
+
+
+#and a more complex one 
+set.vertex.attribute(net1, "position", c(sample(c("Receptive",           #Sample position probabalistically 
+                                          "Insertive", 
+                                          "Versatile"), n, 
+                                        replace= TRUE, 
+                                        prob=c(pct.pos_r, pct.pos_i, pct.pos_v))))
+# # # # # #  AGE   # # # # 
+
+#calc age dist 
+l.age                   <- c( "<1", "1-4", "5-9", "10-14", "15-20", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49", "50-54", "55-59",   
+                         "60-64", "65-69", "70-74", "75-79",  "80-85", "85+")
+
+#make upper and lower limit variables- the actual age will be draw from a distribution within these so these will line up exactly. 
+ll.age                  <- c( 0,   1,   5,   10,  15,  20,  25,  30,  35,  40,  45 , 50,   55,   60,   65,   70,   75,  80,  85)
+ul.age                  <- c( 1,   5,   10,  15,  20,  25,  30,  35,  40,  45,  50,  55,   60,   65,   70,   75,   79,  85,  90)
+    
+i.age_dist              <-c(.04, .05, .05, .06, .06, .06, .06, .07, .07, .07, .06, .06, .06, .06, .06, .04, .04, .02 ,.01) 
+
+#Three step process to add ages by year- 
+    #First define upper and lower bounds
+   age_ll               <-  c( rep(ll.age, (n.msmo*i.age_dist)))
+   age_ul               <-  c(rep(ul.age, (n.msmo*i.age_dist)))
+     
+#Then draw n uniform distributions                                     
+age_yrs                 <- runif(n, min=age_ll, max=age_ul)
+
+#Finally, add specific age (years) to attribute
+set.vertex.attribute(net1, "age", round(age_yrs, 1)) 
+
+#Look at our age distribution to check that it looks right
+#hist(get.vertex.attribute(net1, "age"))
+
+#Randomly assign everyone an age for onset of sexual behavior- this is the age when they can start finding partners so it will be slightly younger than the age at which they are first partnered
+
+age_active              <- c(rep(9, n.msmo)) #rpert(n.msmo, min=8, mode=15, max=25, shape=10))
+
+set.vertex.attribute(net1, "age.actv", age_active)
+
+#And a variable to indicate if the individual is sexually active 
+check.sex.active        <- ifelse(age_yrs>=age_active, 1, 0)
+set.vertex.attribute(net1, "sex.actv", check.sex.active)
+
+
+#Storage variables 
+set.vertex.attribute(net1, "p_total",   c(rep(0, n)))
+
+set.vertex.attribute(net1, "agefirst", NA) 
+
+```
+
+
+###Deaths and Natural History Variables 
+
+Here we pull in a lifetable to use as mortality estimates 
+
+```{r inputs_deaths_nh}
+
+
+df.lifetable            <- data.frame(read_excel("./_2A_Inputs/mortality.xlsx", sheet="Sheet1")) 
+
+
+v.mortality_rate_m      <- df.lifetable$Male
+
+# rate per person, per week
+v.mrm_pp_pw             <- v.mortality_rate_m / 1e5 / 12
+
+# Build out a mortality rate vector
+     
+v.age_spans             <-c(1,4,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5)
+     
+v.mort                  <- rep(v.mrm_pp_pw, times = v.age_spans)
+     
+df.mort_all             <- (data.frame(c(0:89), v.mort))
+colnames(df.mort_all)   <-  c("Age", "Male")
+                           
+                        
+                  
+#Create probability of regression of anal HPV- test this again the input data
+#Anal Clearance Data from Nyitray 2016- Clinical Infetious Disease
+#Penile Clearance Data from Ingles 2015- Papillomavirus Research
+#Scale and shape parameters were derived in excel because I'm basic. 
+     
+df.Nyitray              <- data.frame("months"=c(0,6,12,18,24), "persist"=c(1, 0.49, 0.42, 0.32, 0.3))
+df.Ingles               <- data.frame("months"=c(0,12,24,36), "persist"=c(1, 0.45, 0.2, 0.14))
+     
+v.time                  <- seq(0,36)                                                
+v.a.weibull             <- pweibull(v.time, 0.4, scale = 17.2, log.p = FALSE)
+v.g.weibull             <- pweibull(v.time, 0.6, scale = 14.2, log.p = FALSE)
+     
+w.for_graph             <- data.frame("time"=c(v.time), "inf_a"=1-v.a.weibull, "inf_p"=1-v.g.weibull)
+
+
+ggplot() +
+  geom_point(aes(x=df.Nyitray$months, y=df.Nyitray$persist), color="red", shape=15, size=4) + 
+  geom_line(aes(x=w.for_graph$time, y=w.for_graph$inf_a), lstyle="dash") +    theme_classic() + 
+  ylim(0,1) + ggtitle("Comparison of Observed vs. Fitted Anal HPV Clearance") + 
+  ylab("Persistant Infection") + xlab("Months Since Infected")
+
+ggplot() +
+  geom_point(aes(x=df.Ingles$months, y=df.Ingles$persist), color="blue", shape=15, size=4) + 
+  geom_line(aes(x=w.for_graph$time, y=w.for_graph$inf_p), lstyle="dash") +    theme_classic() + 
+  ylim(0,1) + ggtitle("Comparison of Observed vs. Fitted Penile HPV Clearance") + 
+  ylab("Persistant Infection") + xlab("Months Since Infected")
+      
+v.rec.month.A             <- (v.a.weibull[2:37] - v.a.weibull[1:36])      
+v.rec.month.G             <- (v.g.weibull[2:37] - v.g.weibull[1:36])   
+```
+
+
+Then we create our target stats. We will define the total number of *edges* (partnerships) at any given point, as well as the number of nodes we expect to be in multiple partnerships concurrently. We will also set restrictions by position- for example, two exclusively receptive men should never form a partnership. Finally, if we don't set expectations by position we end up with a lot more versatile nodes in relationships- so I set an expectation for this value. 
+
+```{r target_stats}
+
+mean_degree             <- as.vector((df.mean_deg_msm[2,1] + (2*df.mean_deg_msm[3,1]))/100)
+n.concurrent            <- as.vector(df.mean_deg_msm[3,1]/100)
+age_diff                <- 4.6  #!! Add code to pull this from NSFG!!
+
+#Total number of men x mean degree x 0.5 (1 edge per 2 people)
+edges                   <- (n*mean_degree*0.5)   
+
+#Then stats based on this- first edges total, the concurrent, then all possible combinations that should be impossible 
+#(ie, two men who only have sex with women can never have a partnership)
+# Impossible combinations: FB.FM, FF.FM, FM.FM, FF.MB, FF.MF, MB.MF, MF.MF, FB.MM, FF.MM, FM.MM, MF.MM
+
+targets                 <- c( edges ,          #total edges
+                           (n*n.concurrent),   #concurrent nodes  
+                            edges*age_diff,  #age assortiveness
+                              0,              #no receptive only x receptive only partnerships
+                              0,              #no insertive only x insertive only partnerships
+                              0,              #no sex if not sexually active
+                         (edges*pct.pos_v*2)) #Set expected number of versatile nodes- 2*total edges*portion of pop that is Vs.
+                      
+```
+
+###Model Fit
+
+Now we use the ERGM componants to fit a model. We need the dissolution model (chance that a relationship ends) and the formation model (change that two nodes form a new relationship). Our formation model will match the target stats described above. Our dissolution model will consider only relationship duration and adjust this by the death rate. 
+
+```{r model_fit}
+
+# set.seed(041789)
+
+#Dissolution Model
+f.coef.diss             <- dissolution_coefs( dissolution = (~offset(edges)),
+                                               duration   = c(msm_duration),
+                                                d.rate    = mean(df.mort_all$Male))
+
+#Formation model
+ f.form                 <- ~edges  +  
+                           concurrent  +
+                           absdiff("age") + 
+                          nodemix("position", levels2=c(1,3))  + 
+                          nodefactor("sex.actv", levels=c(1))  +
+                          nodefactor("position", levels=c(3)) # +
+                         # #degree(4)
+	
+	
+#Now make the formation model which is conditional on the dissolution model 
+fit1                    <- netest(net1,  
+                                 formation    = f.form, 
+                                 target.stats = targets, 
+                                 #edapprox     = FALSE,
+                                 coef.diss    = f.coef.diss) 
+
+summary(fit1)
+
+#to test
+  #dx.static     <- netdx(fit1, nsims = 1000, dynamic=FALSE)
+  #dx.static
+  
+  
+```
+Simulate our model over 1000 time steps to see if it matches our expectation.
+```{r simulate, echo=FALSE}
+set.seed(041788)
+
+#Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
+dx_sim                  <- netdx(fit1, nsteps = (1000), 
+                                 nsims = 3, 
+                                 keep.tnetwork = FALSE, 
+                                 ncores = 3, 
+                                 keep.tedgelist = TRUE, 
+                                 nwstats.formula= ~edges + 
+                                                  concurrent + 
+                                                  nodefactor("position", levels=c(1,2,3)) + 
+                                                  absdiff("age") + 
+                                                  degree(c(0,1,2,3)))
+
+#show what happened as a table
+dx_sim$stats.table.formation
+
+nwstats1            <- get_nwstats(dx_sim, sim=1)
+
+#mcmc.diagnostics(fit1$fit) 
+```
+
+###Model Diagnostics 
+
+Check to make sure our model matches up with all the things we think it should
+
+```{r model_diagnostics}
+#we can also make fit graphs 
+plot(dx_sim, type  = "formation" )
+plot(dx_sim, type  = "duration")
+plot(dx_sim, stats = c("edges", "concurrent"))
+
+#Check concurrency by group 
+tel_inf                 <- data.frame(behav= get.vertex.attribute(net1, "behavior"),ID= (get.vertex.attribute(net1, "vertex.names")))
+tel_dx                  <- as.data.frame(dx_sim, sim = 1) 
+tel_dx$ID               <- tel_dx$tail
+together1               <- merge(tel_inf, tel_dx, by.y="ID")
+    
+tel_dx$ID               <- tel_dx$head
+together2               <- merge(tel_inf, tel_dx, by.y="ID")
+  
+together                <-rbind(together1,together2)
+together$count          <- 1
+together                <- together[which(together$terminus.censored==TRUE),]   
+  
+count_by_ID             <-aggregate(together[11], list(together$ID, together$behav), sum)
+  
+MM_conc                 <- length(count_by_ID$count[which(count_by_ID$count>=2 & count_by_ID$Group.2=="MM")])/n.msmo
+
+```
+
+
+##Running an Infection Model
+
+Now that we have a basic partnerhip model, we can run an infection over it. 
+
+We first pull in our model functionts- these are created in *05_Model_Functions.R*
+
+Right now we have five functions: 
+
+**aging.FUN**  Ages individuals by 1 month in each time step 
+
+**arrivals.FUN**  Introduces new individuals to the population at a birth rate that is a function of the average mortality rate
+
+**departures.FUN** Removes individuals from the population according to the provided *mortality.rates* which are a vector of mortality by age
+
+**infection.FUN** This controls HPV infection through sexual partnerships. It requires the number of sex acts per month *act rate* and the infection probability of anal to penile transmission (*inf.prob.i*) and of penile to anal transmission (*inf.prob.r*). This overrides the baseline infection function.
+
+**recovery.FUN** Allows individuals to clear HPV infections. Modeled separately by site according to *rec.rate.a* and *rec.rate.g*
+
+**epi.FUN**  This stores all of the outputs we are interested in collecting
+
+
+```{r infection_model}
+
+source("./05_Model_Functions.R")
+
+  simtime               <- 1500
+  n.sims                <- 1
+
+#  test <- function(vector){
+#    
+#    mean(vector)
+#    
+#    browser()
+#  }
+  
+#  test(targets)
+
+ # Parameterizing an SIS epidemic
+ param                  <- param.net( inf.prob = 0.0001,
+                               mortality.rates = (df.mort_all),
+                                    birth.rate = (mean(df.mort_all$Male)), 
+                                    rec.rate.a = v.rec.month.A, 
+                                    rec.rate.g = v.rec.month.G, 
+                                    rec.rate   = .00001,
+                                    act.rate   = 5.5, 
+                                    inf.prob.r = 0.33, 
+                                    inf.prob.i = 0.05)
+ order_list             <- c("infection.FUN", "aging.FUN", "departures.FUN", "recovery.FUN", "arrivals.FUN", "epi.FUN")
+ 
+ # Initial conditions
+ init                   <- init.net(i.num = n*0.1)
+ 
+ start.time             <- Sys.time()
+ # Control setting      
+ control                <- control.net(type = "SIS", 
+                                      nsims = n.sims, 
+                                     ncores = 8,
+                                     nsteps = simtime, 
+                               infection.FUN = f.inf_msm,
+                                   aging.FUN = age.func,
+                                recovery.FUN = f.recovery,
+                              departures.FUN = d.func,
+                                arrivals.FUN = b.func,
+                                     epi.FUN = epi.func, 
+                              keep.tedgelist = TRUE,
+                               keep.tnetwork = TRUE,  
+                                delete.nodes = FALSE, 
+                                      depend = TRUE,
+                           #    module.order = order_list,
+                                     verbose = FALSE)
+
+ 
+# Run the network model simulation with netsim
+sim_short               <- netsim(fit1, param, init, control)
+      
+ stop.time              <- Sys.time()
+(total.time             <- stop.time - start.time)
+
+#plot(sim_short)
+
+ #put the data from this simulation
+out_sim                 <- as.data.frame(sim_short)
+tel_sim                 <- as.data.frame(sim_short$network$sim1) 
+
+ #Graph of age at sexual behavior onset
+ #ggplot()+ geom_point(aes(x=sex_age, y=age_out, col=sex_out))
+
+#Age distribution of final network
+ hist(get.vertex.attribute(sim_short$network$sim1, "age"))
+
+     n2                 <- network.size(sim_short$network$sim1)
+
+#beep to tell me you're done     
+     beep(2)
+     
+
+```
+
+###Infection Plot by Positio 
+
+We graph infection over time by position- we should expect exclusively receptive individuals cannot get penile HPV and exclusively insertive individuals cannot get anal HPV. For comparison I have also provided the target prevalance of HPV 16 by site (for overall)
+
+```{r plot1}
+
+
+  time                  <- c(seq(1, simtime,1))/12
+                                
+   
+   
+  f.minmax              <- function(stat) {
+  stat_mean             <-apply(stat, 1, mean)*100
+  stat_max              <-apply(stat, 1, max)*100
+  stat_min              <-apply(stat, 1, min)*100
+   
+ stat_out               <- data.frame(mean=stat_mean[2:simtime], max=stat_max[2:simtime], min=stat_min[2:simtime], time=(seq(2, simtime, 1)/12))
+ 
+  return(stat_out)
+  }
+  
+  overall               <- f.minmax(sim_short$epi$prv_a.MM)
+  overall$group         <- "Overall"
+     
+  versatile             <- f.minmax(sim_short$epi$prv_a.v)
+  versatile$group       <- "Versatile"
+      
+  receptive             <- f.minmax(sim_short$epi$prv_a.r)
+  receptive$group       <- "Receptive"
+     
+  insertive             <- f.minmax(sim_short$epi$prv_a.i)
+  insertive$group       <- "Insertive"
+  
+  
+  together_a            <- rbind(overall, versatile, receptive, insertive)
+
+  
+   
+    ggplot() + 
+         geom_line(aes(y=together_a$mean , 
+                       x=together_a$time, 
+                   color=together_a$group), size=1) + 
+    geom_ribbon(aes(ymin=together_a$max, 
+                    ymax=together_a$min, 
+                       x=together_a$time, fill=together_a$group), alpha=0.5)  +
+                        theme_classic() +
+                        ylim(0,100) +
+                        scale_color_manual(name="Sexual Behavior Group", 
+                                          breaks=c("Insertive", "Receptive", "Versatile", "Overall"), 
+                                          values=c("Insertive"="#1b9e77", 
+                                                   "Receptive"="#7570b3", 
+                                                   "Versatile"="#d95f02",
+                                                   "Overall"="black")) +
+      
+                        scale_fill_manual(name="Sexual Behavior Group", 
+                                          breaks=c("Insertive", "Receptive", "Versatile", "Overall"), 
+                                          values=c("Insertive"="#1b9e77", 
+                                                   "Receptive"="#7570b3", 
+                                                   "Versatile"="#d95f02",
+                                                   "Overall"="black")) +
+                        theme(panel.background = element_rect(fill = NA),
+                        plot.title = element_text(size = 10, face = "bold")) +
+                        ggtitle("Prevalence of HPV Among MSM: Anal HPV") +
+                        ylab("Percent Infected (%)") + 
+                        xlab("Time (Years)")  + 
+                        geom_linerange(aes(x=(simtime/13), ymin=9.8, ymax=15.4), size=2, color="black")        
+
+  
+    overall             <- f.minmax(sim_short$epi$prv_g.MM)
+  overall$group         <- "Overall"
+         
+  versatile             <- f.minmax(sim_short$epi$prv_g.v)
+  versatile$group       <- "Versatile"
+         
+  receptive             <- f.minmax(sim_short$epi$prv_g.r)
+  receptive$group       <- "Receptive"
+         
+  insertive             <- f.minmax(sim_short$epi$prv_g.i)
+  insertive$group       <- "Insertive"
+         
+         
+  together_g            <- rbind(overall, versatile, receptive, insertive)
+  
+  
+      ggplot() + 
+         geom_line(aes(y=together_g$mean , 
+                       x=together_g$time, 
+                   color=together_g$group), size=1) + 
+    geom_ribbon(aes(ymin=together_g$max, 
+                    ymax=together_g$min, 
+                       x=together_g$time, 
+                    fill=together_g$group), alpha=0.5)  +
+                        theme_classic() +
+                        ylim(0,100) +
+ scale_color_manual(name="Sexual Behavior Group", 
+                  breaks=c("Insertive", "Receptive", "Versatile", "Overall"), 
+                  values=c("Insertive"="#1b9e77", 
+                           "Receptive"="#7570b3", 
+                           "Versatile"="#d95f02",
+                           "Overall"="black")) +
+      
+  scale_fill_manual(name="Sexual Behavior Group", 
+                  breaks=c("Insertive", "Receptive", "Versatile", "Overall"), 
+                  values=c("Insertive"="#1b9e77", 
+                          "Receptive"="#7570b3", 
+                          "Versatile"="#d95f02",
+                          "Overall"="black")) +
+                        theme(panel.background = element_rect(fill = NA),
+                        plot.title = element_text(size = 10, face = "bold")) +
+                        ggtitle("Prevalence of HPV Among MSM: Genital HPV") +
+                        ylab("Percent Infected (%)") + 
+                        xlab("Time (Years)") + 
+                        geom_linerange(aes(x=(simtime/13), ymin=7.2, ymax=17.2), size=2, color="black")
+
+```
+
+### Validation of sexual output
+
+Comparing two pieces of data- first the age of first partnership and second the cumulative number of partnerships over time. 
+
+```{r plot_by_age}
+
+p_total                 <-  (get.vertex.attribute(sim_short$network$sim1, "p_total") )
+    
+p_total[    
+  p_total>10]           <- 10
+    
+p_total[    
+  p_total==0]           <- NA
+    
+age                     <-  (get.vertex.attribute(sim_short$network$sim1, "age") )
+    
+active2                 <- (get.vertex.attribute(sim_short$network$sim1, "active2") )
+    
+agefirst                <-  (get.vertex.attribute(sim_short$network$sim1, "agefirst") )
+    
+position                <- (get.vertex.attribute(sim_short$network$sim1, "position") )
+    
+combine                 <- data.frame("p_total"=p_total, "age"=age, "active2"=active2, "position"=position, "agefirst"=agefirst)
+      
+combine2                <- data.frame("p_total"  =combine$p_total[ which(combine$active2==1)], 
+                                      "age"      =combine$age[     which(combine$active2==1)], 
+                                       "position"=combine$position[which(combine$active2==1)],
+                                      "agefirst" =combine$agefirst[which(combine$active2==1)])
+
+
+
+combine2$age_group      <- NA
+   
+combine2$age_group[   
+  combine2$age<15 ]     <- 1
+   
+combine2$age_group[   
+  combine2$age>=15 &   
+  combine2$age<20 ]     <- 2
+   
+combine2$age_group[   
+  combine2$age>=20 &   
+  combine2$age<25 ]     <- 3
+   
+combine2$age_group[   
+  combine2$age>=25 &   
+  combine2$age<30 ]     <- 4
+   
+combine2$age_group[   
+  combine2$age>=30 &   
+  combine2$age<35 ]     <- 5
+   
+combine2$age_group[   
+  combine2$age>=35 &   
+  combine2$age<40 ]     <- 6
+   
+combine2$age_group[   
+  combine2$age>=40 &   
+  combine2$age<50 ]     <- 7
+
+combine2$age_group[
+  combine2$age>=50 ]    <- 8
+       
+labels_age              <-c("0-15", "15-19", "20-24", "25-29", "30-34", "35-39", "40-50", "50+")
+
+
+
+
+p.50_p                  <- aggregate(combine2$p_total, list(combine2$age_group), median, na.rm=TRUE)
+p.25_p                  <- aggregate(combine2$p_total, list(combine2$age_group), quantile, probs = 0.25, na.rm=TRUE)
+p.75_p                  <- aggregate(combine2$p_total, list(combine2$age_group), quantile, probs = 0.75, na.rm=TRUE)
+average_p               <- aggregate(combine2$p_total, list(combine2$age_group), mean, na.rm=TRUE)
+sd_p                    <- aggregate(combine2$p_total, list(combine2$age_group), sd, na.rm=TRUE)
+UCL_p                   <- average_p$x + (sd_p$x)
+LCL_p                   <- average_p$x - (sd_p$x)
+LCL_p[1]                <- 0
+
+average_model           <- data.frame("age"=p.50_p$Group.1,
+                                "p_year.25"=p.25_p$x,
+                                "p_year.50"=p.50_p$x,
+                                "p_year.75"=p.75_p$x,
+                                "average_p"=average_p$x,
+                                     "ci_l"=LCL_p, 
+                                     "ci_u"=UCL_p,
+                                     "data"="Model Outputs")
+
+df.msm.byage            <- df.t.byage_median[which(df.t.byage_median$behav=="MSM" & df.t.byage_median$measure=="Total"),]
+df.msm.byage_mean       <- df.t.byage_mean[1:6,]
+
+df.msm.byage$age        <- c(2.2,3.2,4.2,5.2,6.2,7.2)
+targets                 <- cbind(df.msm.byage[,1] ,df.msm.byage[,3:5], df.msm.byage_mean[2:4])
+targets$data            <- "Target Stats"
+colnames(targets)       <- c("age", "p_year.25", "p_year.50", "p_year.75", "average_p", "ci_l", "ci_u", "data" )
+     
+both                    <- rbind(average_model, targets)
+
+
+ggplot()+ 
+   geom_pointrange(aes(x=both$age,
+                       y=both$p_year.50, 
+                    ymin=both$p_year.25, 
+                    ymax=both$p_year.75, color=both$data) , shape=1, size=1) +
+ #    geom_jitter( aes(y=combine2$p_total,
+#                      x=combine2$age_group), alpha=.04, color="red") +
+                        theme_classic() + 
+                        ylim(0,10) +
+                        ggtitle("Cumulative Sexual Partners by Age (Interquartile Range)") + 
+                        ylab("Cumulative Sexual Partners") + 
+                        xlab("Age") +
+                        scale_x_continuous(breaks=c(1,2,3,4,5,6,7,8), labels=labels_age) + 
+                        labs(color="Data")
+
+ggplot()+
+   geom_pointrange(aes(x=both$age,
+                       y=both$average_p, 
+                    ymin=both$ci_l, 
+                    ymax=both$ci_u, color=both$data) , shape=1, size=1) +
+ #   geom_jitter(  aes(y=combine2$p_total,
+  #                    x=combine2$age_group), alpha=.04, color="red") +
+                        theme_classic() +
+                        ggtitle("Cumulative Sexual Partners by Age (Average: Top-Coded)") + 
+                        ylab("Cumulative Sexual Partners") + 
+                        xlab("Age") +
+                        scale_x_continuous(breaks=c(1,2,3,4,5,6,7,8), labels=labels_age) + 
+                        labs(color="Data")
+                        
+
+```
+
+```{r age_first}
+
+
+  age_compare            <- data.frame("age"=c(v.t.agefirst_msm, combine2$agefirst), 
+                                       "data"=c(rep("Target Stats", length(v.t.agefirst_msm)), 
+                                                rep("Model Outputs", length(combine2$agefirst))))
+    
+
+  ggplot()+ 
+    geom_histogram(aes(age_compare$age[age_compare$data=="Model Outputs"],
+                       fill=age_compare$data[age_compare$data=="Model Outputs"], 
+                      alpha=age_compare$data[age_compare$data=="Model Outputs"], y=..density..), color="black", binwidth = 4) +
+    geom_histogram(aes(age_compare$age[age_compare$data=="Target Stats"], 
+                      fill=age_compare$data[age_compare$data=="Target Stats"], 
+                     alpha=age_compare$data[age_compare$data=="Target Stats"], y=..density..), color="black", binwidth = 4) +
+    scale_fill_manual(name="Data", 
+                    values=c("Model Outputs"="#1b9e77", "Target Stats"="#7570b3"))+
+   scale_alpha_manual(name="Data", 
+                   values=c("Model Outputs"=0.3, "Target Stats"=0.3))+
+                          theme_classic() + 
+                          ggtitle("Distribution: Age at first partnership") +
+                          ylab("Density") + 
+                          xlab("Age at first partnership")
+
+
+```
+
+
+```{r run_again}
+
+# # Parameterizing an SIS epidemic
+# param             <- param.net( inf.prob = 0.0001,
+#                          mortality.rates = (mort_all),
+#                               birth.rate = (mean(mort_all$Male)), 
+#                               rec.rate.a = rec.month.A, 
+#                               rec.rate.g = rec.month.G, 
+#                               rec.rate   = .00001,
+#                               act.rate   = 5.5, 
+#                               inf.prob.r = 0.33, 
+#                               inf.prob.i = 0.05)
+
+# order_list      <- c("infection.FUN", "aging.FUN", "departures.FUN", "recovery.FUN", "arrivals.FUN", "epi.FUN")
+# 
+# # Initial conditions
+# init              <- init.net(i.num = 0)
+# 
+# start.time        <- Sys.time()
+# # Control settings
+# control           <- control.net(type = "SIS", 
+#                                 nsims = n.sims, 
+#                                ncores = 8,
+#                                nsteps = simtime, 
+#                          infection.FUN = f.inf_msm,
+#                              aging.FUN = age.func,
+#                           recovery.FUN = f.recovery,
+#                         departures.FUN = d.func,
+#                           arrivals.FUN = b.func,
+#                                epi.FUN = epi.func, 
+#                         keep.tedgelist = TRUE,
+#                          keep.tnetwork = TRUE,  
+#                           delete.nodes = FALSE, 
+#                                 depend = TRUE,
+#                      #    module.order = order_list,
+#                                verbose = TRUE)
+#
+# 
+## Run the network model simulation with netsim
+#sim_short          <- netsim(fit1, param, init, control)
+#
+
+```

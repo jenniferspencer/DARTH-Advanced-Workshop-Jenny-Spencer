@@ -1,0 +1,19 @@
+infile dictionary {
+
+*****************************************************************
+* NATIONAL SURVEY OF FAMILY GROWTH (NSFG)
+* 2013-2017 FOUR-YEAR WEIGHT AND 2011-2017 SIX-YEAR WEIGHT
+* STATA MALE DATA DICTIONARY
+*
+* Warning: Edit this file at your own risk
+*
+*****************************************************************
+
+_lines(1)
+
+_line(1)
+
+    _column(1)       long                             CASEID   %5f "Respondent ID number: 2011-2017 NSFG"
+    _column(6)     double                       WGT2013_2017  %16f "Final 4-Year Weight: 2013-2017 NSFG"
+   _column(22)     double                       WGT2011_2017  %16f "Final 6-Year Weight: 2011-2017 NSFG"
+}

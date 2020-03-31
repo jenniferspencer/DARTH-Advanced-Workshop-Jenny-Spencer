@@ -1,0 +1,772 @@
+---
+title: "Test_just_samesex"
+author: "Jenny Spencer"
+date: "1/16/2020"
+output: html_document
+---
+
+
+# Epimodel Fit Issues 
+
+```{r setup}
+#Just MSM
+rm(list=ls())
+
+library(EpiModel)   #the primary package we will be using to make our models 
+library(beepr)
+set.seed(041788)
+
+
+#controls
+n.sim      <- 3
+n.steps    <- 500
+```
+
+
+## Test 1: MSM and WSW only 
+
+We start with same-sex only (WSW and MSM) partnerships. We make each of these groups 50% of the total population. We assume a mean density of 70% and a concurrency rate of 5%. Mean relationship duration is 60 months. 
+
+We set a limitation that WSW and MSM individuals cannot partner with each other- only within group partnerships are allowed. 
+
+
+We start with same-sex only (WSW and MSM) and opposite-sex only (WSM and MSW) partnerships. To start we make each of these grousp 25% of the total population. We assume a mean density of 80% and a concurrency rate of 5%. Mean duration is 60 months. 
+
+We define impossible combinations of sexual partnerships using nodemix on sexual behavior categories so that MSM can only partner with each other, WSW can only partner with each other and MSW/WSM can only partner across groups. 
+
+
+```{r create_network1, warning=FALSE, message=FALSE}
+# # # # # # # # # # # #  Create Network  # # # # # # # # # # # # # # # # 
+
+#Create a nework of 50/50 men and women 
+n                  <- 20000
+
+#Create populations for each size of our groups
+n.msmo             <- n* 0.5
+n.wswo             <- n* 0.5
+
+#Network with n people, partnerships are not directed 
+net1               <- network.initialize(n, directed=FALSE)
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex", c(rep("F", n.wswo) , rep("M", n.msmo)))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+
+#and behavior category
+set.vertex.attribute(net1, "behavior", c(rep("FF", n.wswo) , rep("MM", n.msmo)))   # then for men
+
+
+# # # # # # # # # # # #  Model Fit  # # # # # # # # # # # # # # # # 
+
+#Define number of expected edges (density=0.7)
+edges              <- (n *.7 * 0.5)   
+
+#Overall concurrency is 5% 
+concurrency        <- .05
+
+#Formation model 
+f.form             <- ~edges + concurrent +  nodemix("behavior", levels2=c(2))
+
+#Target stats
+targets            <- c( edges ,            # total edges
+                       (n*concurrency) ,    # concurrent
+                        0)                  # no FF xMM relationships
+
+#Dissolution model 
+coef.diss          <- dissolution_coefs( dissolution = (~offset(edges)), 
+                                           duration  = c(60.0)) 
+
+
+#Now make the formation model which is conditional on the dissolution model 
+fit1               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox     = FALSE,
+                             coef.diss    = coef.diss) 
+
+summary(fit1)
+```
+
+### FIT 1:  MSM and WSW only 
+
+Now we run a test of this model to see how we fit. 
+
+```{r simulate1}
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim1             <- netdx(fit1, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior") ) #+ degree(0:3))
+
+#show what happened as a table
+dx_sim1$stats.table.formation
+plot(dx_sim1)
+plot(dx_sim1, type  = "duration")
+
+density_FF        <- (dx_sim1$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MM        <- (dx_sim1$stats.table.formation$`Sim Mean`[5]/n.msmo)*2
+
+(statsout1         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= c((round(density_FF,3)), NA, (round(density_MM,3))), 
+                                "density target"=c(0.7, NA , 0.7)))
+
+```
+
+
+## Test 2: 4 groups, equal size, no restrictions 
+
+We start with same-sex only (WSW and MSM) and opposite-sex only (WSM and MSW) partnerships. To start we make each of these grousp 25% of the total population. We assume a mean density of 80% and a concurrency rate of 5%. Mean relationship duration is 60 months. 
+
+We define impossible combinations of sexual partnerships using nodemix on sexual behavior categories so that MSM can only partner with each other, WSW can only partner with each other and MSW/WSM can only partner across groups. 
+
+
+```{r create_network2 , warning=FALSE , message=FALSE}
+# # # # # # # # # # # #  Create Network  # # # # # # # # # # # # # # # # 
+
+#Create populations for each size of our groups
+n.msmo             <- n* 0.25 
+n.wswo             <- n* 0.25
+n.wsmo             <- n* 0.25 
+n.mswo             <- n* 0.25 
+
+#Network with n people, partnerships are not directed 
+net1               <- network.initialize(n, directed=FALSE)
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex", c(rep("F", n.wswo) , rep("M", n.msmo), rep("F", n.wsmo), rep("M", n.mswo) ))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+
+#and behavior category
+set.vertex.attribute(net1, "behavior", c(rep("FF", n.wswo) , rep("MM", n.msmo), rep("FM", n.wsmo), rep("MF", n.mswo) ))  
+
+
+# # # # # # # # # # # #  Model Fit  # # # # # # # # # # # # # # # # 
+
+#Formation model 
+f.form             <- ~edges + concurrent +  nodemix("behavior", levels2=c(2,3,4,6,7,8,9))
+
+#Target stats
+targets            <- c( edges,            #total edges
+                       (n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0)      #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+
+#Now make the formation model which is conditional on the dissolution model 
+
+fit2               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox     = FALSE,
+                             coef.diss    = coef.diss) 
+
+summary(fit2)
+```
+
+### FIT 2:  All groups equal size
+
+Simulate the model and test output (code hidden- same as above)
+
+```{r simulate2, echo=FALSE }
+#dx.static     <- netdx(fit1, nsims = 1000, dynamic=FALSE)
+#dx.static
+
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim2             <- netdx(fit2, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior"))
+
+#show what happened as a table
+dx_sim2$stats.table.formation
+plot(dx_sim2)
+plot(dx_sim2, type  = "duration")
+plot(dx_sim2, stats = c("concurrent"))
+plot(dx_sim2, stats = c("nodefactor.behavior.MM"))
+
+density_FF        <- (dx_sim2$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim2$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim2$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout2         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(0.7,0.7,0.7)))
+
+```
+
+## Test 3: 4 groups, equal size, adding node factor
+
+  We were close to our goal before, but not we can add nodefactor to specify that we want the mean degree among MSM to be different- in this case we want the overall mean degree to be 70%, but we want the mean degree of MSM to be 66%
+
+```{r create_network3 , warning=FALSE , message=FALSE}
+
+
+#Create populations for each size of our groups
+n.msmo             <- n* 0.25
+n.wswo             <- n* 0.25
+n.wsmo             <- n* 0.25
+n.mswo             <- n* 0.25
+
+#Network with n people, partnerships are not directed 
+net1               <- network.initialize(n, directed=FALSE)
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex", c(rep("F", n.wswo) , rep("M", n.msmo), rep("F", n.wsmo), rep("M", n.mswo) ))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+
+#and behavior category
+set.vertex.attribute(net1, "behavior", c(rep("FF", n.wswo) , rep("MM", n.msmo), rep("FM", n.wsmo), rep("MF", n.mswo) ))  
+
+
+# # # # # # # # # # # #  Model Fit  # # # # # # # # # # # # # # # # 
+
+#Formation model 
+f.form             <- ~edges + concurrent +  nodemix("behavior", levels2=c(2,3,4,6,7,8,9)) + 
+                                             nodefactor("behavior", level=4)
+
+#Target stats
+targets            <- c( edges,            #total edges
+                       (n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0,     #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+                         n.msmo*0.66)      #mean degree of MSM should be 66% 
+
+#Now make the formation model which is conditional on the dissolution model 
+
+fit3               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox     = FALSE,
+                             coef.diss    = coef.diss) 
+
+summary(fit3)
+
+```
+
+### FIT 3:  Adding node factor
+
+Simulate the model and test output (code hidden, same as above)
+
+```{r simulate3, echo=FALSE }
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim3             <- netdx(fit3, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior"))
+
+#show what happened as a table
+dx_sim3$stats.table.formation
+plot(dx_sim3)
+plot(dx_sim3, type  = "duration")
+plot(dx_sim3, stats = c("concurrent"))
+plot(dx_sim3, stats = c("nodefactor.behavior.MM"))
+
+density_FF        <- (dx_sim3$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim3$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim3$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout3         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(0.7,0.7,0.66)))
+
+```
+
+
+## Test 4: 4 groups, unequal size
+
+  Now set MSM and WSW each to 10% of population size and those seeking opposite-sex partners to 80%. All using the same mean degree. 
+
+```{r create_network4 , warning=FALSE , message=FALSE}
+
+
+#Create populations for each size of our groups
+n.msmo             <- n* 0.1
+n.wswo             <- n* 0.1
+n.wsmo             <- n* 0.4 
+n.mswo             <- n* 0.4 
+
+#Network with n people, partnerships are not directed 
+net1               <- network.initialize(n, directed=FALSE)
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex", c(rep("F", n.wswo) , rep("M", n.msmo), rep("F", n.wsmo), rep("M", n.mswo) ))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+
+#and behavior category
+set.vertex.attribute(net1, "behavior", c(rep("FF", n.wswo) , rep("MM", n.msmo), rep("FM", n.wsmo), rep("MF", n.mswo) ))  
+
+
+# # # # # # # # # # # #  Model Fit  # # # # # # # # # # # # # # # # 
+
+#Formation model 
+f.form             <- ~edges + concurrent +  nodemix("behavior", levels2=c(2,3,4,6,7,8,9))
+
+#Target stats
+targets            <- c( edges,            #total edges
+                       (n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0)      #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+
+#Now make the formation model which is conditional on the dissolution model 
+
+fit4               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox     = FALSE,
+                             coef.diss    = coef.diss) 
+
+summary(fit4)
+
+```
+
+### Fit 4: Unequal Size
+
+```{r simulate4, echo=FALSE }
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim4             <- netdx(fit4, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior"))
+
+#show what happened as a table
+dx_sim4$stats.table.formation
+plot(dx_sim4)
+plot(dx_sim4, type  = "duration")
+plot(dx_sim4, stats = c("concurrent"))
+plot(dx_sim4, stats = c("nodefactor.behavior.MM"))
+
+density_FF        <- (dx_sim4$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim4$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim4$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout4         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(NA,NA,NA)))
+
+```
+
+
+## Test 5: 4 groups, unequal size, adding nodefactor
+
+  Set MSM and WSW each to 10% of population size and those seeking opposite-sex partners to 80%. Specify mean degree of 66% for MSM
+
+
+```{r create_network5 , warning=FALSE , message=FALSE}
+
+#Create populations for each size of our groups
+n.msmo             <- n* 0.1
+n.wswo             <- n* 0.1
+n.wsmo             <- n* 0.4
+n.mswo             <- n* 0.4 
+
+#Network with n people, partnerships are not directed 
+net1               <- network.initialize(n, directed=FALSE)
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex", c(rep("F", n.wswo) , rep("M", n.msmo), rep("F", n.wsmo), rep("M", n.mswo) ))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+
+#and behavior category
+set.vertex.attribute(net1, "behavior", c(rep("FF", n.wswo) , rep("MM", n.msmo), rep("FM", n.wsmo), rep("MF", n.mswo) ))  
+
+
+# # # # # # # # # # # #  Model Fit  # # # # # # # # # # # # # # # # 
+
+#Formation model 
+f.form             <- ~edges + concurrent +  nodemix("behavior", levels2=c(2,3,4,6,7,8,9))+ 
+                                             nodefactor("behavior", level=4)
+
+#Target stats
+targets            <- c( edges,            #total edges
+                       (n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0,      #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+                          n.msmo*0.66)
+#Now make the formation model which is conditional on the dissolution model 
+
+fit5               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox     = FALSE,
+                             coef.diss    = coef.diss) 
+
+summary(fit5)
+
+```
+
+
+### Fit 5: Unequal Size + nodefactor
+
+```{r simulate5, echo=FALSE }
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim5             <- netdx(fit5, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior"))
+
+#show what happened as a table
+dx_sim5$stats.table.formation
+plot(dx_sim5)
+plot(dx_sim5, type  = "duration")
+plot(dx_sim5, stats = c("concurrent"))
+plot(dx_sim5, stats = c("nodefactor.behavior.MM"))
+
+density_FF        <- (dx_sim5$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim5$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim5$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout5         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(NA,0.7,0.66)))
+```
+
+## Test 6: 4 groups, unequal size, adding nodefactor, removing concurrency
+
+  Set MSM and WSW each to 10% of population size and those seeking opposite-sex partners to 80%. 
+  Specify mean degree of 66% for MSM. 
+  Remove restrictions on the number of concurrent partners. 
+
+```{r create_network6, warning=FALSE , message=FALSE}
+
+# # # # # # # # # # # #  Model Fit  # # # # # # # # # # # # # # # # 
+
+#Dissolution model 
+#coef.diss          <- dissolution_coefs( dissolution = (~offset(edges)), 
+#                                           duration  = c(30.0)) 
+
+#Formation model 
+f.form             <- ~edges + #concurrent +
+                      nodemix("behavior", levels2=c(2,3,4,6,7,8,9))+ 
+                      nodefactor("behavior", level=4)
+
+#Target stats
+targets            <- c( edges,            #total edges
+                      # (n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0,      #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+                          n.msmo*0.66)
+#Now make the formation model which is conditional on the dissolution model 
+
+fit6               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox     = FALSE,
+                             coef.diss    = coef.diss) 
+
+summary(fit6)
+
+```
+
+
+### Fit 6: Unequal Size w/o concurrency 
+```{r simulate6, echo=FALSE }
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim6             <- netdx(fit6, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior"))
+
+#show what happened as a table
+dx_sim6$stats.table.formation
+plot(dx_sim6)
+plot(dx_sim6, type  = "duration")
+plot(dx_sim6, stats = c("concurrent"))
+plot(dx_sim6, stats = c("nodefactor.behavior.MM"))
+
+density_FF        <- (dx_sim6$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim6$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim6$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout6         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(NA,0.7,0.66)))
+
+
+#concurrency 
+   round((dx_sim6$stats.table.formation$`Sim Mean`[2]/n),3)
+```
+
+## Test 7: 4 groups, unequal size, adding nodefactor, removing concurrency, adding WSW nodefactor
+
+  Set MSM and WSW each to 10% of population size and those seeking opposite-sex partners to 80%. Specify mean degree of 66% for MSM. 
+  Remove restrictions on the number of concurrent partners. 
+
+```{r create_network7, warning=FALSE , message=FALSE}
+
+#Formation model 
+f.form             <- ~edges + #concurrent #+
+                      nodemix("behavior", levels2=c(2,3,4,6,7,8,9))+ 
+                      nodefactor("behavior", level=c(1,4))
+
+#Target stats
+targets            <- c( edges,            #total edges
+                      # (n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0,      #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+                          n.wswo*0.70,
+                          n.msmo*0.66)
+#Now make the formation model which is conditional on the dissolution model 
+
+fit7               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox     = FALSE,
+                             coef.diss    = coef.diss) 
+
+summary(fit7)
+
+```
+
+
+### Fit 7: Unequal Size w/o concurrency + WSW
+
+  Also report the percent concurrent nodes (vs. expected 5%)
+  
+```{r simulate7, echo=FALSE }
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim7             <- netdx(fit7, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior", levels=c(-2)))
+
+#show what happened as a table
+dx_sim7$stats.table.formation
+plot(dx_sim7)
+plot(dx_sim7, type  = "duration")
+plot(dx_sim7, stats = c("concurrent"))
+plot(dx_sim7, stats = c("nodefactor.behavior.MM"))
+
+density_FF        <- (dx_sim7$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim7$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim7$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout7         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(0.70,0.7,0.66)))
+
+#concurrency 
+   round((dx_sim7$stats.table.formation$`Sim Mean`[2]/n),3)
+   
+```
+
+
+## Test 8: 4 groups, unequal size, adding nodefactor, high concurrency, adding WSW nodefactor
+
+  Set MSM and WSW each to 10% of population size and those seeking opposite-sex partners to 80%. 
+  Specify mean degree of 66% for MSM and 70% for WSW. 
+  Increase to 10% of the population having concurrent partnerships 
+
+```{r create_network8 , warning=FALSE , message=FALSE}
+
+concurrency        <- .08
+
+#Formation model 
+f.form             <- ~edges + concurrent +
+                      nodemix("behavior", levels2=c(2,3,4,6,7,8,9))+ 
+                      nodefactor("behavior", level=c(1,4))
+
+#Target stats
+targets            <- c( edges,            #total edges
+                       (n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0,      #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+                          n.wswo*0.70,
+                          n.msmo*0.66)
+#Now make the formation model which is conditional on the dissolution model 
+
+fit8               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox     = FALSE,
+                             coef.diss    = coef.diss) 
+
+summary(fit8)
+
+```
+
+
+### Fit 8: Unequal Size w/ high concurrency + WSW
+
+  
+```{r simulate8, echo=FALSE }
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim8             <- netdx(fit8, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior", levels=c(-2)))
+
+#show what happened as a table
+dx_sim8$stats.table.formation
+plot(dx_sim8)
+plot(dx_sim8, type  = "duration")
+plot(dx_sim8, stats = c("concurrent"))
+plot(dx_sim8, stats = c("nodefactor.behavior.MM"))
+
+density_FF        <- (dx_sim8$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim8$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim8$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout8         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(0.70,0.7,0.66)))
+
+#concurrency 
+   round((dx_sim7$stats.table.formation$`Sim Mean`[2]/n),3)
+   
+```
+
+
+## Test 9: Really small MSM pop (actual size)
+  5% MSM + nodefactor + 8% concurrency
+
+
+```{r create_network9 , warning=FALSE , message=FALSE}
+
+set.seed(041788)
+#Create populations for each size of our groups
+n.msmo             <- n* 0.05
+n.wswo             <- n* 0.05
+n.wsmo             <- n* 0.45
+n.mswo             <- n* 0.45 
+
+#Network with n people, partnerships are not directed 
+net1               <- network.initialize(n, directed=FALSE)
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex", c(rep("F", n.wswo) , rep("M", n.msmo), rep("F", n.wsmo), rep("M", n.mswo) ))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+
+#and behavior category
+set.vertex.attribute(net1, "behavior", c(rep("FF", n.wswo) , rep("MM", n.msmo), rep("FM", n.wsmo), rep("MF", n.mswo) ))  
+
+
+# # # # # # # # # # # #  Model Fit  # # # # # # # # # # # # # # # # 
+
+#Formation model 
+f.form             <- ~edges + #concurrent + 
+                       nodemix("behavior", levels2=c(2,3,4,6,7,8,9))+ 
+                       nodefactor("behavior", level=4)
+
+#Target stats
+targets            <- c( edges,            #total edges
+                       #(n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0,      #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+                          n.msmo*0.66)
+#Now make the formation model which is conditional on the dissolution model 
+
+fit9               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox     = FALSE,
+                          #set.control.ergm = control.ergm(MCMC.interval= 10000), 
+                             coef.diss    = coef.diss)
+
+summary(fit9)
+```
+
+
+### Fit 9: Small pop
+  5% MSM + nodefactor + 8% concurrency
+
+```{r simulate9, echo=FALSE }
+set.seed(041788)
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim9             <- netdx(fit9, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE,  
+                           # set.control.ergm = control.simulate.ergm(MCMC.interval= 10000), 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior", levels=c(-2)))
+
+#show what happened as a table
+dx_sim9$stats.table.formation
+plot(dx_sim9)
+plot(dx_sim9, type  = "duration")
+plot(dx_sim9, stats = c("concurrent"))
+plot(dx_sim9, stats = c("nodefactor.behavior.MM"))
+
+density_FF        <- (dx_sim9$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim9$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim9$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout9         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(NA,0.7,0.66)))
+
+#concurrency 
+   round((dx_sim9$stats.table.formation$`Sim Mean`[2]/n),3)
+   
+   beep(2)
+```
+
+
+## Test 10:  Small MSM pop (actual size)
+  5% MSM + nodefactor 
+
+
+```{r create_network9 , warning=FALSE , message=FALSE}
+
+#Network with n people, partnerships are not directed 
+net1               <- network.initialize(n, directed=FALSE)
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex", c(rep("F", n.wswo) , rep("M", n.msmo), rep("F", n.wsmo), rep("M", n.mswo) ))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+
+#and behavior category
+set.vertex.attribute(net1, "behavior", c(rep("FF", n.wswo) , rep("MM", n.msmo), rep("FM", n.wsmo), rep("MF", n.mswo) ))  
+
+
+# # # # # # # # # # # #  Model Fit  # # # # # # # # # # # # # # # # 
+
+#Formation model 
+f.form             <- ~edges + #concurrent + 
+                       nodemix("behavior", levels2=c(2,3,4,6,7,8,9))+ 
+                       nodefactor("behavior", level=4)
+
+#Dissolution model 
+coef.diss          <- dissolution_coefs( dissolution = (~offset(edges)), 
+                                           duration  = c(60.0)) 
+#Target stats
+targets            <- c( edges,            #total edges
+                       #(n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0,      #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+                          n.msmo*0.66)
+
+#Now make the formation model which is conditional on the dissolution model 
+
+fit10               <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                             #edapprox    = FALSE,
+                             coef.diss    = coef.diss, 
+                         set.control.ergm = control.ergm(MCMC.interval= 2000))
+
+
+summary(fit10)
+```
+
+
+### Fit 10: long duration- no restraint on concurrency 
+  5% MSM + nodefactor + 8% concurrency
+
+```{r simulate9, echo=FALSE }
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim10             <- netdx(fit10, nsteps = (n.steps), nsims = n.sim, keep.tnetwork = FALSE, ncores = 8, keep.tedgelist = TRUE, 
+                             nwstats.formula= ~edges +concurrent + nodemix("behavior") + nodefactor("behavior", levels=c(-2)))
+
+#show what happened as a table
+dx_sim10$stats.table.formation
+plot(dx_sim10)
+plot(dx_sim10, type  = "duration")
+plot(dx_sim10, stats = c("concurrent"))
+plot(dx_sim10, stats = c("nodefactor.behavior.MM"))
+
+density_FF        <- (dx_sim10$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim10$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim10$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout10         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(NA,0.7,0.66)))
+
+#concurrency 
+   round((dx_sim10$stats.table.formation$`Sim Mean`[2]/n),3)
+   
+```

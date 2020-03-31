@@ -1,0 +1,158 @@
+---
+title: "test_MCMC"
+author: "Jenny Spencer"
+date: "1/29/2020"
+output: html_document
+---
+
+```{r setup}
+#Just MSM
+rm(list=ls())
+
+library(EpiModel)   #the primary package we will be using to make our models 
+library(beepr)
+set.seed(041788)
+
+
+#controls
+n.sim      <- 3
+n.steps    <- 500
+```
+
+
+## Test 1: MSM and WSW only 
+
+We start with same-sex only (WSW and MSM) partnerships. We make each of these groups 50% of the total population. We assume a mean density of 70% and a concurrency rate of 5%. Mean relationship duration is 60 months. 
+
+We set a limitation that WSW and MSM individuals cannot partner with each other- only within group partnerships are allowed. 
+
+
+We start with same-sex only (WSW and MSM) and opposite-sex only (WSM and MSW) partnerships. To start we make each of these grousp 25% of the total population. We assume a mean density of 80% and a concurrency rate of 5%. Mean duration is 60 months. 
+
+We define impossible combinations of sexual partnerships using nodemix on sexual behavior categories so that MSM can only partner with each other, WSW can only partner with each other and MSW/WSM can only partner across groups. 
+
+
+```{r create_network1, warning=FALSE, message=FALSE}
+   set.seed(04171988)
+
+# # # # # # # # # # # #  Create Network  # # # # # # # # # # # # # # # # 
+
+#Create a nework of 50/50 men and women 
+n                  <- 20000
+
+#Create populations for each size of our groups
+n.msmo             <- n* 0.05 
+n.wswo             <- n* 0.05
+n.wsmo             <- n* 0.45 
+n.mswo             <- n* 0.45 
+
+#Network with n people, partnerships are not directed 
+net1               <- network.initialize(n, directed=FALSE)
+
+# # # # # # SEX # # # # 
+#Add sex
+set.vertex.attribute(net1, "sex", c(rep("F", n.wswo) , rep("M", n.msmo), rep("F", n.wsmo), rep("M", n.mswo) ))
+
+# # # # # # SEXUAL BEHAVIOR  # # # # 
+
+#and behavior category
+set.vertex.attribute(net1, "behavior", c(rep("FF", n.msmo) , rep("MM", n.wswo), rep("FM", n.wsmo), rep("MF", n.mswo) ))  
+
+
+# # # # # # # # # # # #  Model Fit  # # # # # # # # # # # # # # # # 
+
+#Define number of expected edges (density=0.7)
+edges              <- (n *.7 * 0.5)   
+
+#Overall concurrency is 5% 
+concurrency        <- .05
+
+
+
+#Formation model 
+f.form             <- ~edges +
+                 concurrent +  
+                 nodemix("behavior", levels2=c(2,3,4,6,7,8,9)) + 
+                 nodefactor("behavior", level=4)
+
+#Target stats
+targets            <- c( edges,            #total edges
+                       (n*concurrency),    #concurrent
+                        0,0,0,0,0,0,0,     #no FFxFM, FMxFM, FFxMF, MFxMF, FFxMM, FMxMM, MFxMM relationships
+                         n.msmo*0.66)      #mean degree of MSM should be 66% 
+
+
+#Dissolution model 
+coef.diss          <- dissolution_coefs( dissolution = (~offset(edges)), 
+                                           duration  = c(60.0)) 
+
+#Now make the formation model which is conditional on the dissolution model 
+
+fit1              <- netest(net1, 
+                             formation    = f.form, 
+                             target.stats = targets, 
+                            #edapprox     = FALSE,
+                         set.control.ergm = control.ergm(MCMC.interval= 10000), 
+                             coef.diss    = coef.diss) 
+
+summary(fit1)
+
+```
+
+### FIT 1:  MSM and WSW only 
+
+Now we run a test of this model to see how we fit. 
+
+```{r simulate1}
+set.seed(04171988)
+
+#Simulate our model given the formation and dissolution we've established. 
+dx_sim1             <- netdx(fit1, nsteps = (n.steps), 
+                                    nsims = n.sim, 
+                            keep.tnetwork = FALSE, 
+                                   ncores = 8, 
+                         set.control.ergm = control.simulate.ergm(MCMC.interval= 10000), 
+                           keep.tedgelist = TRUE, 
+                          nwstats.formula = ~edges +concurrent + nodemix("behavior") + nodefactor("behavior") ) #+ degree(0:3))
+
+#show what happened as a table
+dx_sim1$stats.table.formation
+plot(dx_sim1)
+plot(dx_sim1, type  = "duration")
+
+density_FF        <- (dx_sim1$stats.table.formation$`Sim Mean`[3]/n.wswo)*2
+density_MF        <- (dx_sim1$stats.table.formation$`Sim Mean`[7]/n.wsmo)
+density_MM        <- (dx_sim1$stats.table.formation$`Sim Mean`[12]/n.msmo)*2
+
+(statsout1         <- data.frame("behavior"=c("FF", "MF", "MM"), 
+                                "density observed"= round(c(density_FF, density_MF, density_MM),3),
+                                "density target"=c(0.7,0.7,0.66)))
+
+```
+
+```{r concurrency_by}
+
+#Check it out
+tel_inf               <- data.frame(behav= get.vertex.attribute(net1, "behavior"),ID= (get.vertex.attribute(net1, "vertex.names")))
+tel_dx                <- as.data.frame(dx_sim1, sim = 1) 
+tel_dx$ID             <- tel_dx$tail
+together1             <- merge(tel_inf, tel_dx, by.y="ID")
+  
+tel_dx$ID             <- tel_dx$head
+together2             <- merge(tel_inf, tel_dx, by.y="ID")
+
+together              <-rbind(together1,together2)
+together$count        <- 1
+together              <- together[which(together$terminus.censored==TRUE),]   
+
+count_by_ID           <-aggregate(together[11], list(together$ID, together$behav), sum)
+
+
+FF_conc               <- length(count_by_ID$count[which(count_by_ID$count>=2 & count_by_ID$Group.2=="FF")])/n.wswo
+MF_conc               <- length(count_by_ID$count[which(count_by_ID$count>=2 & count_by_ID$Group.2=="MF")])/n.mswo
+FM_conc               <- length(count_by_ID$count[which(count_by_ID$count>=2 & count_by_ID$Group.2=="FM")])/n.wsmo
+MM_conc               <- length(count_by_ID$count[which(count_by_ID$count>=2 & count_by_ID$Group.2=="MM")])/n.msmo
+
+count_by_behav        <-aggregate(count_by_ID[,3], list(count_by_ID$Group.2), mean)
+
+```
