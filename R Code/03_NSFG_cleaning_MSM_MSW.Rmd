@@ -1320,6 +1320,8 @@ position_MSM            <- prop.table(svytable(~position + behav,
                               subset(nsfg_design, behav=="MSM")),2)
 
 
+position_MSM2           <- prop.table(svytable(~position + orientation,
+                              subset(nsfg_design, behav=="MSM")),2)
 
 ```
 

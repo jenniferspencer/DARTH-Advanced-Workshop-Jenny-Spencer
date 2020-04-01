@@ -346,9 +346,9 @@ Right now we have five functions:
 ```{r infection_model}
 
 source("./05_Model_Functions.R")
-
-  simtime               <- 150
-  n.sims                <- 1
+  years                 <- 100  
+  simtime               <- years*12
+  n.sims                <- 3
 
 
  # Parameterizing an SIS epidemic
@@ -380,7 +380,7 @@ source("./05_Model_Functions.R")
                                      epi.FUN = epi.func, 
                               keep.tedgelist = TRUE,
                                keep.tnetwork = TRUE,  
-                                delete.nodes = FALSE, 
+                                delete.nodes = FALSE,   #This needs to be FALSE if testing partners/age output- but runs faster if TRUE
                                       depend = TRUE,
                            #    module.order = order_list,
                                      verbose = FALSE)
