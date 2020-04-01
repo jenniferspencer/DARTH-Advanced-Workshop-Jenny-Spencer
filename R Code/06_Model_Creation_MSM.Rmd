@@ -36,6 +36,8 @@ Data for MSM comes largely from the National Survey of Family Growth (2011-2017)
  df.t.byage_mean        <- msm_model_inputs$byage_mean
  v.t.agefirst_msm       <- msm_model_inputs$t.msm_agefirst
  df.mean_deg_msm        <- msm_model_inputs$msm_mean_deg
+ abs_diff_msm           <- msm_model_inputs$abs_diff_behav[1,2]
+ freq_msm               <- msm_model_inputs$behav_freq[1,2]
  
 #Also establish network size - any other model-wide variables 
  n                       <- 500
@@ -207,7 +209,7 @@ Then we create our target stats. We will define the total number of *edges* (par
 
 ```{r target_stats}
 
-mean_degree             <- as.vector((df.mean_deg_msm[2,1] + (2*df.mean_deg_msm[3,1]))/100)
+mean_degree             <- as.vector((df.mean_deg_msm[2,1] + (2*df.mean_deg_msm[3,1]))/100)*(mean(check.sex.active))
 n.concurrent            <- as.vector(df.mean_deg_msm[3,1]/100)
 age_diff                <- 4.6  #!! Add code to pull this from NSFG!!
 
@@ -220,7 +222,7 @@ edges                   <- (n*mean_degree*0.5)
 
 targets                 <- c( edges ,          #total edges
                            (n*n.concurrent),   #concurrent nodes  
-                            edges*age_diff,  #age assortiveness
+                            edges*abs_diff_msm,  #age assortiveness
                               0,              #no receptive only x receptive only partnerships
                               0,              #no insertive only x insertive only partnerships
                               0,              #no sex if not sexually active
@@ -345,17 +347,9 @@ Right now we have five functions:
 
 source("./05_Model_Functions.R")
 
-  simtime               <- 1500
+  simtime               <- 150
   n.sims                <- 1
 
-#  test <- function(vector){
-#    
-#    mean(vector)
-#    
-#    browser()
-#  }
-  
-#  test(targets)
 
  # Parameterizing an SIS epidemic
  param                  <- param.net( inf.prob = 0.0001,
@@ -364,7 +358,7 @@ source("./05_Model_Functions.R")
                                     rec.rate.a = v.rec.month.A, 
                                     rec.rate.g = v.rec.month.G, 
                                     rec.rate   = .00001,
-                                    act.rate   = 5.5, 
+                                    act.rate   = freq_msm, 
                                     inf.prob.r = 0.33, 
                                     inf.prob.i = 0.05)
  order_list             <- c("infection.FUN", "aging.FUN", "departures.FUN", "recovery.FUN", "arrivals.FUN", "epi.FUN")
