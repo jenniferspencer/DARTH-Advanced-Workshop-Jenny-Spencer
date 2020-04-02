@@ -19,6 +19,15 @@ library(kableExtra)  #for making tables look nice
 library(mc2d)        #for using pert distribution
 #remotes::install_github("statnet/tergmLite@v1.2.0") #the TERGM lite package
 library(tergmLite)   #for running the network code
+library(sessioninfo)
+sessioninfo::package_info(pkgs = c("network", "networkDynamic", "statnet.common",
+                                   "ergm", "tergm", "EpiModel", "EpiModelHPC",
+                                   "tergmLite", "EpiABC", "EpiModelHIV",
+                                   "ARTnetData", "ARTnet"), dependencies = FALSE)
+
+
+#install.packages("sessioninfo")
+
 
 ```
 
@@ -28,8 +37,8 @@ library(tergmLite)   #for running the network code
 
 ```{r data_in}
 
-p.msmo                <- 0.25
-p.msmw                <- 0.25
+p.msmo                <- 0.2
+p.msmw                <- 0.2
 p.mswo                <- 1-(p.msmo + p.msmw)
 
 p.pos_r               <- .16   
@@ -57,6 +66,7 @@ v.sex                   <- c(sample(c("F", "M"), n,
                                         replace= TRUE, 
                                         prob=c(p.f, (1-p.f)))) 
 
+
 # # # Sexual Behavior # # # 
 #define sexual behavior based on sex
 v.behave                <- ifelse(v.sex=="F", "wsmo", c(sample(c("msmo", "msmw", "mswo"), sum(v.sex=="M"), 
@@ -71,13 +81,14 @@ n.mswo                  <-sum(v.behave=="mswo")
 n.wsmo                  <-sum(v.behave=="wsmo")
 
 
+
 #define position preference based on sexual behavior. For now assume positional preference distribution is similar
 v.position              <- ifelse((v.behave=="msmo"| v.behave=="msmw"), c(sample(c("Receptive",          
                                                                                    "Insertive", 
                                                                                     "Versatile"), 
                                                                         sum(v.behave=="msmo"| v.behave=="msmw"), 
                                                                         replace= TRUE, 
-                                                                         prob=c(p.pos_r, p.pos_i, p.pos_v))), NA)
+                                                                         prob=c(p.pos_r, p.pos_i, p.pos_v))), "none")
 
 #Define a variable that dictates what age you begin sexual activity
 v.age_active              <- ifelse(v.behave=="msmo", c(rpert(sum(n.msmo), min=8, mode=18, max=25, shape=10)), 
@@ -122,15 +133,18 @@ set.vertex.attribute(net1, "age.actv", v.age_active)
 set.vertex.attribute(net1, "sex.actv", ifelse(age_yrs>=v.age_active, 1, 0))
 
 
+#Check that this is correct
+n==(n.msmo + n.msmw + n.mswo + n.wsmo)
+
 ```
 
 ##Create MSM network 
 
 ```{r msm_network}
 
-edges_msm               <- ((n.msmo + n.msmw)* 0.74 * 0.5)       #an average of 0.74 relationships per person -> edges is this times 0.5
+edges_msm               <- ((n.msmo + n.msmw)* 0.64 * 0.5)       #an average of 0.74 relationships per person -> edges is this times 0.5
 edges_msm_c             <- ((n.msmo + n.msmw)* 0.08)             # 8% of all MSM or MSMW should be in concurrent nodes
-edges_msm_v             <- ((n.msmo + n.msmw)* 0.74 * p.pos_v) #an average of 0.74 relationships per versatile person 
+edges_msm_v             <- ((n.msmo + n.msmw)* 0.64 * p.pos_v) #an average of 0.74 relationships per versatile person 
 
 #For MSM network we will assume straight individuals can have no partnerships- this will create a very sparce network
 
@@ -171,7 +185,7 @@ summary(fit_msm)
 Run model diagnositics  
 
 ```{r model_dx}
-
+start                    <- (Sys.time())
 #Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
 dx_sim                  <- netdx(fit_msm, nsteps = (1000), 
                                  nsims = 3, 
@@ -196,25 +210,93 @@ plot(dx_sim, stats = c("edges", "concurrent"))
   dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
   dx.static
   
+ (end1                    <- (Sys.time() - start))
+
 ```
 
+```{r model_dx_burnin1k}
+
+ start                    <- (Sys.time())
+
+#Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
+dx_sim1                  <- netdx(fit_msm, nsteps = (1000), 
+                                 nsims = 3, 
+                                 keep.tnetwork = FALSE, 
+                                 ncores = 3, 
+                                 keep.tedgelist = TRUE, 
+                                 set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e4,
+                                                                          MCMC.interval= 1e4), 
+                               set.control.stergm =  control.simulate.network(MCMC.burnin = 1e4),
+                                                                        #  MCMC.interval= 1e4),
+                                 nwstats.formula= ~edges + 
+                                                  concurrent + 
+                                                  nodefactor("position", levels=c(1,2,3)) + 
+                                                  degree(c(0,1,2,3)))
+
+#show what happened as a table
+dx_sim1$stats.table.formation
+
+plot(dx_sim1, type  = "formation" )
+plot(dx_sim1, type  = "duration")
+plot(dx_sim1, stats = c("edges", "concurrent"))
+
+
+#Also test the static version of the model- this help in troubleshooting 
+
+#  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
+#  dx.static
+  (end2                    <- (Sys.time() - start))
+```
+
+
+```{r model_dx_burnin10k}
+
+ start                    <- (Sys.time())
+
+#Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
+dx_sim2                  <- netdx(fit_msm, nsteps = (1000), 
+                                 nsims = 3, 
+                                 keep.tnetwork = FALSE, 
+                                 ncores = 3, 
+                                 keep.tedgelist = TRUE, 
+                                 set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e5,
+                                                                          MCMC.interval= 1e5), 
+                             #   set.control.stergm =  control.simulate.network(MCMC.burnin = 1e4),
+                            #                                            #  MCMC.interval= 1e4),
+                                 nwstats.formula= ~edges + 
+                                                  concurrent + 
+                                                  nodefactor("position", levels=c(1,2,3)) + 
+                                                  degree(c(0,1,2,3)))
+
+#show what happened as a table
+dx_sim2$stats.table.formation
+
+plot(dx_sim2, type  = "formation" )
+plot(dx_sim2, type  = "duration")
+plot(dx_sim2, stats = c("edges", "concurrent"))
+
+
+#Also test the static version of the model- this help in troubleshooting 
+
+#  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
+#  dx.static
+  (end3                    <- (Sys.time() - start))
+```
 ##Create MSW network
 
 ```{r msw_network}
 
-edges_msw               <- ((n.mswo + n.wsmo)* 0.81 * 0.5)       #an average of 0.81 relationships per person -> edges is this times 0.5
-edges_msw_c             <- ((n.mswo + n.wsmo)* 0.04)             #4% of all MSW should be in concurrent nodes
+edges_msw               <- ((n.mswo + n.wsmo)* 0.75 * 0.5)       #an average of 0.81 relationships per person -> edges is this times 0.5
+edges_msw_c             <- ((n.mswo + n.wsmo)* 0.08)              #7% of all MSW should be in concurrent nodes
 
 #For MSM network we will assume straight individuals can have no partnerships- this will create a very sparce network
 
 targets                 <- c(edges_msw,  #total edges
-                             (0),        #nodefactor- the number of MSWO nodes that appear in any edge (0) 
+                             (0),        #nodefactor- the number of MSM nodes that appear in any edge (0) 
                              (0),        #node mix- restrict F/F partnerships (0) 
                              (0),        #node mix- restrict M/M partnerships (0)  
                              (0),        #nodefactor- those who are not sexually active cannot have partners (0) 
                             edges_msw_c) #concurrent nodes   
-
-     
 
 ## Model fit ---- 
 #Dissolution Model
@@ -224,9 +306,9 @@ f.coef.diss             <- dissolution_coefs( dissolution = (~offset(edges)),
 
 #Formation model
  f.form                 <- ~edges  +  
-                           nodefactor("behave", levels=c(1))  +
+                           nodefactor("behave", levels=c(1)) +
                            nodemix("sex", levels2=c(1,3))    + 
-                           nodefactor("sex.actv", levels=c(1))    +
+                           nodefactor("sex.actv", levels=c(1))  +
                            concurrent 
 	
 	
@@ -241,14 +323,14 @@ summary(fit_msw)
 
 Run model diagnostics 
 
-```{r model_dx_2}
-
+```{r model_dx_default}
+start                   <- Sys.time()
 #Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
 dx_sim                  <- netdx(fit_msw, nsteps = (1000), 
-                                 nsims = 3, 
+                                 nsims = 1, 
                                  keep.tnetwork = FALSE, 
                                  ncores = 3, 
-                                 keep.tedgelist = TRUE, 
+                                 keep.tedgelist = TRUE,
                                  nwstats.formula= ~edges + 
                                                   concurrent + 
                                                   degree(c(0,1,2,3)))
@@ -261,17 +343,112 @@ plot(dx_sim, type  = "duration")
 plot(dx_sim, stats = c("edges", "concurrent"))
 
 
-#Also test the static version of the model- this help in troubleshooting 
+#Also test the static version of the model- this helps in troubleshooting 
 
   dx.static     <- netdx(fit_msw, nsims = 1000, dynamic=FALSE)
   dx.static
   
-
+(end                    <- (Sys.time() - start))
 ```
 
-A function to analyze my own networks based on EpiModel HIV code
 
-```{r creation_network_function}
+
+Tester infection model for MSM
+
+```{r infection_model}
+
+
+ # Parameterizing an SIS epidemic
+ param             <- param.net( inf.prob = 0.4,
+                                 rec.rate = 0.003 )
+ 
+ 
+  # Initial conditions
+ init              <- init.net(i.num = n*.3)
+ 
+ # Control settings
+ control <- control.net(type = "SIS", 
+                       nsims = 1, 
+                       ncores= 8,
+                      nsteps = 100,  #(50*12), 
+              keep.tedgelist = TRUE, 
+              initialize.FUN = initialize.net,
+               keep.tnetwork = TRUE,  #,
+              resim_nets.FUN = resim_nets,
+               # delete.nodes = TRUE, 
+                      depend = TRUE,
+                     verbose = FALSE)
+
+ 
+# Run the network model simulation with netsim
+sim_short          <- netsim(fit_msm, param, init, control)
+
+plot(sim_short)
+```
+
+
+storing other code from EpiModel
+```{r store}
+
+#' @description Adjusts the edges coefficients in a dynamic network model
+#'              to preserve the mean degree.
+#'
+#' @inheritParams aging_msm
+#'
+#' @details
+#' In HIV/STI modeling, there is typically an assumption that changes in
+#' population size do not affect one's number of partners, specified as the
+#' mean degree for network models. A person would not have 10 times the number
+#' of partners should he move from a city 10 times as large. This module uses
+#' the adjustment of Krivitsky et al. to adjust the edges coefficients on the
+#' three network models to account for varying population size in order to
+#' preserve that mean degree.
+
+#edges_correct_msm <- function(dat, at) {
+#
+#  old.num <- dat$epi$num[at - 1]
+#  new.num <- sum(dat$attr$active == 1, na.rm = TRUE)
+#  adjust <- log(old.num) - log(new.num)
+#
+#  coef.form.m <- get_nwparam(dat, network = 1)$coef.form
+#  coef.form.m[1] <- coef.form.m[1] + adjust
+#  dat$nwparam[[1]]$coef.form <- coef.form.m
+#
+#  coef.form.p <- get_nwparam(dat, network = 2)$coef.form
+#  coef.form.p[1] <- coef.form.p[1] + adjust
+#  dat$nwparam[[2]]$coef.form <- coef.form.p
+#
+#  coef.form.i <- get_nwparam(dat, network = 3)$coef.form
+#  coef.form.i[1] <- coef.form.i[1] + adjust
+#  dat$nwparam[[3]]$coef.form <- coef.form.i
+#
+#  return(dat)
+#}
+
+
+calc_resim_nwstats <- function(dat, at) {
+
+  for (nw in 1:3) {
+    n <- attr(dat$el[[nw]], "n")
+    edges <- nrow(dat$el[[nw]])
+    meandeg <- round(edges / n, 3)
+    concurrent <- round(mean(get_degree(dat$el[[nw]]) > 1), 3)
+    mat <- matrix(c(edges, meandeg, concurrent), ncol = 3, nrow = 1)
+    if (at == 2) {
+      dat$stats$nwstats[[nw]] <- mat
+      colnames(dat$stats$nwstats[[nw]]) <- c("edges", "meand", "conc")
+    }
+    if (at > 2) {
+      dat$stats$nwstats[[nw]] <- rbind(dat$stats$nwstats[[nw]], mat)
+    }
+  }
+
+  return(dat)
+}
+
+#A function to analyze my own networks based on EpiModel HIV code
+
+#```{r creation_network_function}
 
 simnet_msm <- function(dat, at, x, param, init, control, s) {
 
@@ -429,78 +606,83 @@ resim_nets <- function(dat, at) {
 
 initialize.net <- function(x, param, init, control, s) {
 
+  browser()
   if (control$start == 1) {
     # Master Data List --------------------------------------------------------
     dat <- list()
-    dat$param <- param
-    dat$init <- init
-    dat$control <- control
+    dat$param           <- param
+    dat$init            <- init
+    dat$control         <- control
 
-    dat$attr <- list()
-    dat$stats <- list()
-    dat$temp <- list()
+    dat$attr            <- list()
+    dat$stats           <- list()
+    dat$temp            <- list()
 
 
     # Network Simulation ------------------------------------------------------
-    nw <- simulate(x$fit, basis = x$fit$newnetwork,
-                   control = control$set.control.ergm)
-    modes <- ifelse(nw %n% "bipartite", 2, 1)
-    if (control$depend == TRUE) {
-      if (class(x$fit) == "stergm") {
-        nw <- network.collapse(nw, at = 1)
-      }
-      nw <- sim_nets(x, nw, nsteps = 1, control)
-    }
-    if (control$depend == FALSE) {
-      nw <- sim_nets(x, nw, nsteps = control$nsteps, control)
-    }
-    nw <- activate.vertices(nw, onset = 1, terminus = Inf)
+    nw                  <- simulate(x$fit, 
+                                    basis = x$fit$newnetwork,
+                                  control = control$set.control.ergm)
+    
+    modes               <- ifelse(nw %n% "bipartite", 2, 1)
+              if (control$depend == TRUE) {
+              if (class(x$fit) == "stergm") {
+                   nw   <- network.collapse(nw, at = 1)
+                                }
+                   nw   <- sim_nets(x, nw, nsteps = 1, control)
+                              }
+              if (control$depend == FALSE) {
+                   nw   <- sim_nets(x, nw, nsteps = control$nsteps, control)
+                              }
+    nw                  <- activate.vertices(nw, onset = 1, terminus = Inf)
 
 
     # Network Parameters ------------------------------------------------------
-    dat$nw <- nw
-    dat$nwparam <- list(x[-which(names(x) == "fit")])
-    dat$param$modes <- modes
+    dat$nw              <- nw
+    dat$nwparam         <- list(x[-which(names(x) == "fit")])
+    dat$param$modes     <- modes
 
 
     # Initialization ----------------------------------------------------------
 
     ## Initialize persistent IDs
     if (control$use.pids == TRUE) {
-      dat$nw <- init_pids(dat$nw, dat$control$pid.prefix)
+      dat$nw            <- init_pids(dat$nw, dat$control$pid.prefix)
     }
 
     ## Pull network val to attr
-    form <- get_nwparam(dat)$formation
+    form                <- get_nwparam(dat)$formation
     
     #fterms <- get_formula_term_attr(form, nw)
-    fterms <- setdiff(list.vertex.attributes(nw), c("active", "vertex.names", "na"))
-    if(length(fterms) == 0) fterms <- NULL
+    fterms              <- setdiff(list.vertex.attributes(nw), c("active", "vertex.names", "na"))
     
-    dat <- copy_toall_attr(dat, at = 1, fterms)
+    if(length(fterms
+      ) == 0) fterms    <- NULL
+    
+    dat                 <- copy_toall_attr(dat, at = 1, fterms)
 
     ## Store current proportions of attr
-    dat$temp$fterms <- fterms
-    dat$temp$t1.tab <- get_attr_prop(dat$nw, fterms)
+    dat$temp$fterms     <- fterms
+    dat$temp$t1.tab     <- get_attr_prop(dat$nw, fterms)
 
 
     ## Infection Status and Time Modules
-    dat <- init_status.net(dat)
+    dat                 <- init_status.net(dat)
 
     ## Get initial prevalence
-    dat <- get_prev.net(dat, at = 1)
+    dat                 <- get_prev.net(dat, at = 1)
   } else {
-    dat <- list()
+    dat                 <- list()
 
-    dat$nw <- x$network[[s]]
-    dat$param <- x$param
-    dat$control <- control
-    dat$nwparam <- x$nwparam
-    dat$epi <- sapply(x$epi, function(var) var[s])
-    names(dat$epi) <- names(x$epi)
-    dat$attr <- x$attr[[s]]
-    dat$stats <- sapply(x$stats, function(var) var[[s]])
-    dat$temp <- list()
+    dat$nw              <- x$network[[s]]
+    dat$param           <- x$param
+    dat$control         <- control
+    dat$nwparam         <- x$nwparam
+    dat$epi             <- sapply(x$epi, function(var) var[s])
+    names(dat$epi)      <- names(x$epi)
+    dat$attr            <- x$attr[[s]]
+    dat$stats           <- sapply(x$stats, function(var) var[[s]])
+    dat$temp            <- list()
   }
 
   return(dat)
@@ -509,96 +691,5 @@ initialize.net <- function(x, param, init, control, s) {
 
 ```
 
-```{r infection_model}
 
 
- # Parameterizing an SIS epidemic
- param             <- param.net( inf.prob = 0.4,
-                                 rec.rate = 0.003 )
- 
- 
-  # Initial conditions
- init              <- init.net(i.num = n*.3)
- 
- # Control settings
- control <- control.net(type = "SIS", 
-                       nsims = 1, 
-                       ncores= 8,
-                      nsteps = 20,  #(50*12), 
-              keep.tedgelist = TRUE, 
-              initialize.FUN = initialize.net,
-               keep.tnetwork = TRUE,  #,
-              resim_nets.FUN = resim_nets,
-               # delete.nodes = TRUE, 
-                      depend = TRUE,
-                     verbose = FALSE)
-
- 
-# Run the network model simulation with netsim
-sim_short          <- netsim(fit_msm, param, init, control)
-
-plot(sim_short)
-```
-
-
-storing other code from EpiModel
-```{r store}
-
-#' @description Adjusts the edges coefficients in a dynamic network model
-#'              to preserve the mean degree.
-#'
-#' @inheritParams aging_msm
-#'
-#' @details
-#' In HIV/STI modeling, there is typically an assumption that changes in
-#' population size do not affect one's number of partners, specified as the
-#' mean degree for network models. A person would not have 10 times the number
-#' of partners should he move from a city 10 times as large. This module uses
-#' the adjustment of Krivitsky et al. to adjust the edges coefficients on the
-#' three network models to account for varying population size in order to
-#' preserve that mean degree.
-
-#edges_correct_msm <- function(dat, at) {
-#
-#  old.num <- dat$epi$num[at - 1]
-#  new.num <- sum(dat$attr$active == 1, na.rm = TRUE)
-#  adjust <- log(old.num) - log(new.num)
-#
-#  coef.form.m <- get_nwparam(dat, network = 1)$coef.form
-#  coef.form.m[1] <- coef.form.m[1] + adjust
-#  dat$nwparam[[1]]$coef.form <- coef.form.m
-#
-#  coef.form.p <- get_nwparam(dat, network = 2)$coef.form
-#  coef.form.p[1] <- coef.form.p[1] + adjust
-#  dat$nwparam[[2]]$coef.form <- coef.form.p
-#
-#  coef.form.i <- get_nwparam(dat, network = 3)$coef.form
-#  coef.form.i[1] <- coef.form.i[1] + adjust
-#  dat$nwparam[[3]]$coef.form <- coef.form.i
-#
-#  return(dat)
-#}
-
-
-calc_resim_nwstats <- function(dat, at) {
-
-  for (nw in 1:3) {
-    n <- attr(dat$el[[nw]], "n")
-    edges <- nrow(dat$el[[nw]])
-    meandeg <- round(edges / n, 3)
-    concurrent <- round(mean(get_degree(dat$el[[nw]]) > 1), 3)
-    mat <- matrix(c(edges, meandeg, concurrent), ncol = 3, nrow = 1)
-    if (at == 2) {
-      dat$stats$nwstats[[nw]] <- mat
-      colnames(dat$stats$nwstats[[nw]]) <- c("edges", "meand", "conc")
-    }
-    if (at > 2) {
-      dat$stats$nwstats[[nw]] <- rbind(dat$stats$nwstats[[nw]], mat)
-    }
-  }
-
-  return(dat)
-}
-
-
-```
