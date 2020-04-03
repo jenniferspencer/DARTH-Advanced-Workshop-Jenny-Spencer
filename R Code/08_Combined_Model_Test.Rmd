@@ -372,9 +372,9 @@ Tester infection model for MSM
  # Control settings
  control                <- control.net(type = "SIS", 
                                       nsims = 1, 
-                                     epi.by = "behav",
+                                     epi.by = "behave",
                                       ncores= 8,
-                                     nsteps = 3,  #(50*12), 
+                                     nsteps = 2,  #(50*12), 
                              keep.tedgelist = TRUE, 
                              initialize.FUN = initialize_func,
                        #   set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e5,
@@ -382,7 +382,8 @@ Tester infection model for MSM
                       #          set.control.stergm = control.simulate.network(MCMC.burnin.min = 0.7e+5, 
                       #                                                        MCMC.burnin.max = 0.7e+5),
                               keep.tnetwork = TRUE,  #,
-                             resim_nets.FUN = simnet_msm,
+                             resim_nets.FUN = simnet_hpv,
+                            infection.FUN = NULL, 
                               # delete.nodes = TRUE, 
                                   skip.check = TRUE,
                                      depend = TRUE,
@@ -390,7 +391,7 @@ Tester infection model for MSM
               
  
 # Run the network model simulation with netsim
-sim_short          <- netsim(l.fits, param, init, control)
+sim_short              <- netsim(l.fits, param, init, control)
 
 
 plot(sim_short)
