@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 rm(list=ls())
 
-library(EpiModel)    #the primary package we will be using to make our models 
+library(EpiModelHIV)    #the primary package we will be using to make our models 
 library(ndtv)        #for the fancy videos
 library(readxl)      #read in excel files 
 library(tidyverse)   #Includes a number of shortcuts for data manipulation
@@ -28,7 +28,6 @@ sessioninfo::package_info(pkgs = c("network", "networkDynamic", "statnet.common"
 
 #install.packages("sessioninfo")
 
-
 ```
 
 ## Model Data 
@@ -37,8 +36,8 @@ sessioninfo::package_info(pkgs = c("network", "networkDynamic", "statnet.common"
 
 ```{r data_in}
 
-p.msmo                <- 0.2
-p.msmw                <- 0.2
+p.msmo                <- 0.1
+p.msmw                <- 0.1
 p.mswo                <- 1-(p.msmo + p.msmw)
 
 p.pos_r               <- .16   
@@ -48,7 +47,7 @@ p.pos_v               <- .56
 msm_duration          <- 71.6
 msw_duration          <- 89.5
 
-p.f                   <- 0.3
+p.f                   <- 0.4
 
 ```
 
@@ -167,10 +166,10 @@ f.coef.diss             <- dissolution_coefs( dissolution = (~offset(edges)),
 #Formation model
  f.form                 <- ~edges  +  
                            nodefactor("behave", levels=c(3,4))  +
-                           nodemix("position", levels2=c(1,3))    + 
+                           nodemix("position", levels2=c(1,6))    + 
                            nodefactor("sex.actv", levels=c(1))    +
                            concurrent                             +
-                           nodefactor("position", levels=c(3)) 
+                           nodefactor("position", levels=c(4)) 
 	
 	
 fit_msm                 <- netest(net1,  
@@ -207,8 +206,8 @@ plot(dx_sim, stats = c("edges", "concurrent"))
 
 #Also test the static version of the model- this help in troubleshooting 
 
-  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
-  dx.static
+#  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
+#  dx.static
   
  (end1                    <- (Sys.time() - start))
 
@@ -226,8 +225,7 @@ dx_sim1                  <- netdx(fit_msm, nsteps = (1000),
                                  keep.tedgelist = TRUE, 
                                  set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e4,
                                                                           MCMC.interval= 1e4), 
-                               set.control.stergm =  control.simulate.network(MCMC.burnin = 1e4),
-                                                                        #  MCMC.interval= 1e4),
+                               set.control.stergm = control.simulate.network(MCMC.burnin.min = 1e+4, MCMC.burnin.max = 1e+4),
                                  nwstats.formula= ~edges + 
                                                   concurrent + 
                                                   nodefactor("position", levels=c(1,2,3)) + 
@@ -250,37 +248,36 @@ plot(dx_sim1, stats = c("edges", "concurrent"))
 
 
 ```{r model_dx_burnin10k}
-
- start                    <- (Sys.time())
-
-#Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
-dx_sim2                  <- netdx(fit_msm, nsteps = (1000), 
-                                 nsims = 3, 
-                                 keep.tnetwork = FALSE, 
-                                 ncores = 3, 
-                                 keep.tedgelist = TRUE, 
-                                 set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e5,
-                                                                          MCMC.interval= 1e5), 
-                             #   set.control.stergm =  control.simulate.network(MCMC.burnin = 1e4),
-                            #                                            #  MCMC.interval= 1e4),
-                                 nwstats.formula= ~edges + 
-                                                  concurrent + 
-                                                  nodefactor("position", levels=c(1,2,3)) + 
-                                                  degree(c(0,1,2,3)))
-
-#show what happened as a table
-dx_sim2$stats.table.formation
-
-plot(dx_sim2, type  = "formation" )
-plot(dx_sim2, type  = "duration")
-plot(dx_sim2, stats = c("edges", "concurrent"))
-
-
-#Also test the static version of the model- this help in troubleshooting 
-
-#  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
-#  dx.static
-  (end3                    <- (Sys.time() - start))
+#
+# start                    <- (Sys.time())
+#
+##Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
+#dx_sim2                  <- netdx(fit_msm, nsteps = (1000), 
+#                                 nsims = 3, 
+#                                 keep.tnetwork = FALSE, 
+#                                 ncores = 3, 
+#                                 keep.tedgelist = TRUE, 
+#                                 set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e5,
+#                                                                          MCMC.interval= 1e5), 
+#                                set.control.stergm = control.simulate.network(MCMC.burnin.min = 0.7e+5, MCMC.burnin.max = 0.7e+5),
+#                                 nwstats.formula= ~edges + 
+#                                                  concurrent + 
+#                                                  nodefactor("position", levels=c(1,2,3)) + 
+#                                                  degree(c(0,1,2,3)))
+#
+##show what happened as a table
+#dx_sim2$stats.table.formation
+#
+#plot(dx_sim2, type  = "formation" )
+#plot(dx_sim2, type  = "duration")
+#plot(dx_sim2, stats = c("edges", "concurrent"))
+#
+#
+###Also test the static version of the model- this help in troubleshooting 
+#
+###  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
+###  dx.static
+#  (end3                    <- (Sys.time() - start))
 ```
 ##Create MSW network
 
@@ -357,31 +354,44 @@ Tester infection model for MSM
 
 ```{r infection_model}
 
+  source("./09_initialize_function_test.R")
+  source("./10_resim_function.R")
+
+ l.fits                 <- list(fit_msm, fit_msw)
+
 
  # Parameterizing an SIS epidemic
- param             <- param.net( inf.prob = 0.4,
-                                 rec.rate = 0.003 )
+ param                  <- param.net(inf.prob = 0.4,
+                                     rec.rate = 0.003,
+                                         modes=1)
  
  
   # Initial conditions
- init              <- init.net(i.num = n*.3)
+ init                   <- init.net(i.num = n*.3)
  
  # Control settings
- control <- control.net(type = "SIS", 
-                       nsims = 1, 
-                       ncores= 8,
-                      nsteps = 100,  #(50*12), 
-              keep.tedgelist = TRUE, 
-              initialize.FUN = initialize.net,
-               keep.tnetwork = TRUE,  #,
-              resim_nets.FUN = resim_nets,
-               # delete.nodes = TRUE, 
-                      depend = TRUE,
-                     verbose = FALSE)
-
+ control                <- control.net(type = "SIS", 
+                                      nsims = 1, 
+                                     epi.by = "behav",
+                                      ncores= 8,
+                                     nsteps = 3,  #(50*12), 
+                             keep.tedgelist = TRUE, 
+                             initialize.FUN = initialize_func,
+                       #   set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e5,
+                      #                                           MCMC.interval= 1e5), 
+                      #          set.control.stergm = control.simulate.network(MCMC.burnin.min = 0.7e+5, 
+                      #                                                        MCMC.burnin.max = 0.7e+5),
+                              keep.tnetwork = TRUE,  #,
+                             resim_nets.FUN = simnet_msm,
+                              # delete.nodes = TRUE, 
+                                  skip.check = TRUE,
+                                     depend = TRUE,
+                                    verbose = FALSE)
+              
  
 # Run the network model simulation with netsim
-sim_short          <- netsim(fit_msm, param, init, control)
+sim_short          <- netsim(l.fits, param, init, control)
+
 
 plot(sim_short)
 ```
@@ -450,85 +460,6 @@ calc_resim_nwstats <- function(dat, at) {
 
 #```{r creation_network_function}
 
-simnet_msm <- function(dat, at, x, param, init, control, s) {
-
-   browser()
-  ## Edges correction
-  #  dat <- edges_correct_msm(dat, at) - see notes below 
-
-  ## Main network
-  nwparam.m <- EpiModel::get_nwparam(dat, network = 1)
-
- # dat$el[[2]]
- # if (dat$param$method == 1) {
-#    dat$attr$deg.pers <- get_degree(dat$el[[2]])
-#  } else {
- #   dat$attr$deg.pers <- paste0(dat$attr$race, get_degree(dat$el[[2]]))
- # }
-  dat <- tergmLite::updateModelTermInputs(dat, network = 1)
-
-  dat$el[[1]] <- tergmLite::simulate_network(p = dat$p[[1]],
-                                             el = dat$el[[1]],
-                                             coef.form = nwparam.m$coef.form,
-                                             coef.diss = nwparam.m$coef.diss$coef.adj,
-                                             save.changes = TRUE)
-
-  dat$temp$new.edges <- NULL
-  if (at == 2) {
-    new.edges.m <- matrix(dat$el[[1]], ncol = 2)
-  } else {
-    new.edges.m <- attributes(dat$el[[1]])$changes
-    new.edges.m <- new.edges.m[new.edges.m[, "to"] == 1, 1:2, drop = FALSE]
-  }
-  dat$temp$new.edges <- matrix(dat$attr$uid[new.edges.m], ncol = 2)
-
-
-  ## Casual network
-  nwparam.p <- EpiModel::get_nwparam(dat, network = 2)
-
-  if (dat$param$method == 1) {
-    dat$attr$deg.main <- get_degree(dat$el[[1]])
-  } else {
-    dat$attr$deg.main <- paste0(dat$attr$race, get_degree(dat$el[[1]]))
-  }
-  dat <- tergmLite::updateModelTermInputs(dat, network = 2)
-
-  dat$el[[2]] <- tergmLite::simulate_network(p = dat$p[[2]],
-                                             el = dat$el[[2]],
-                                             coef.form = nwparam.p$coef.form,
-                                             coef.diss = nwparam.p$coef.diss$coef.adj,
-                                             save.changes = TRUE)
-
-  if (at == 2) {
-    new.edges.p <- matrix(dat$el[[2]], ncol = 2)
-  } else {
-    new.edges.p <- attributes(dat$el[[2]])$changes
-    new.edges.p <- new.edges.p[new.edges.p[, "to"] == 1, 1:2, drop = FALSE]
-  }
-  dat$temp$new.edges <- rbind(dat$temp$new.edges,
-                              matrix(dat$attr$uid[new.edges.p], ncol = 2))
-
-
-  ## One-off network
-  nwparam.i <- EpiModel::get_nwparam(dat, network = 3)
-
-  if (dat$param$method == 1) {
-    dat$attr$deg.pers <- get_degree(dat$el[[2]])
-  } else {
-    dat$attr$deg.pers <- paste0(dat$attr$race, get_degree(dat$el[[2]]))
-  }
-  dat <- tergmLite::updateModelTermInputs(dat, network = 3)
-
-  dat$el[[3]] <- tergmLite::simulate_ergm(p = dat$p[[3]],
-                                          el = dat$el[[3]],
-                                          coef = nwparam.i$coef.form)
-
-  if (dat$control$save.nwstats == TRUE) {
-    dat <- calc_resim_nwstats(dat, at)
-  }
-
-  return(dat)
-}
 
 
 ## The base code: 
@@ -603,90 +534,6 @@ resim_nets <- function(dat, at) {
 ```
 
 ```{r init_func}
-
-initialize.net <- function(x, param, init, control, s) {
-
-  browser()
-  if (control$start == 1) {
-    # Master Data List --------------------------------------------------------
-    dat <- list()
-    dat$param           <- param
-    dat$init            <- init
-    dat$control         <- control
-
-    dat$attr            <- list()
-    dat$stats           <- list()
-    dat$temp            <- list()
-
-
-    # Network Simulation ------------------------------------------------------
-    nw                  <- simulate(x$fit, 
-                                    basis = x$fit$newnetwork,
-                                  control = control$set.control.ergm)
-    
-    modes               <- ifelse(nw %n% "bipartite", 2, 1)
-              if (control$depend == TRUE) {
-              if (class(x$fit) == "stergm") {
-                   nw   <- network.collapse(nw, at = 1)
-                                }
-                   nw   <- sim_nets(x, nw, nsteps = 1, control)
-                              }
-              if (control$depend == FALSE) {
-                   nw   <- sim_nets(x, nw, nsteps = control$nsteps, control)
-                              }
-    nw                  <- activate.vertices(nw, onset = 1, terminus = Inf)
-
-
-    # Network Parameters ------------------------------------------------------
-    dat$nw              <- nw
-    dat$nwparam         <- list(x[-which(names(x) == "fit")])
-    dat$param$modes     <- modes
-
-
-    # Initialization ----------------------------------------------------------
-
-    ## Initialize persistent IDs
-    if (control$use.pids == TRUE) {
-      dat$nw            <- init_pids(dat$nw, dat$control$pid.prefix)
-    }
-
-    ## Pull network val to attr
-    form                <- get_nwparam(dat)$formation
-    
-    #fterms <- get_formula_term_attr(form, nw)
-    fterms              <- setdiff(list.vertex.attributes(nw), c("active", "vertex.names", "na"))
-    
-    if(length(fterms
-      ) == 0) fterms    <- NULL
-    
-    dat                 <- copy_toall_attr(dat, at = 1, fterms)
-
-    ## Store current proportions of attr
-    dat$temp$fterms     <- fterms
-    dat$temp$t1.tab     <- get_attr_prop(dat$nw, fterms)
-
-
-    ## Infection Status and Time Modules
-    dat                 <- init_status.net(dat)
-
-    ## Get initial prevalence
-    dat                 <- get_prev.net(dat, at = 1)
-  } else {
-    dat                 <- list()
-
-    dat$nw              <- x$network[[s]]
-    dat$param           <- x$param
-    dat$control         <- control
-    dat$nwparam         <- x$nwparam
-    dat$epi             <- sapply(x$epi, function(var) var[s])
-    names(dat$epi)      <- names(x$epi)
-    dat$attr            <- x$attr[[s]]
-    dat$stats           <- sapply(x$stats, function(var) var[[s]])
-    dat$temp            <- list()
-  }
-
-  return(dat)
-}
 
 
 ```

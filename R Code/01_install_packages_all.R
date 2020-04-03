@@ -21,3 +21,5 @@ install.packages(c("tidyverse",   #Downloads a number of packages including ggpl
                    "mc2d"))       #For using the pert distribution 
 
 
+
+remotes::install_github("statnet/tergmLite@v1.2.0", force= TRUE)
