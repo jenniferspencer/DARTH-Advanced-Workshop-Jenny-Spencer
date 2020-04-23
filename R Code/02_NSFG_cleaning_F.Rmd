@@ -163,9 +163,9 @@ Then use this loop to pull in all these variables
 ```{r all_years_F, warning=FALSE}
 
 #Read in raw data
-F_2013             <- read.dta13("./2_Inputs/NSFG/2011-2013/2011_2013.FemResp.dta")
-F_2015             <- read.dta13("./2_Inputs/NSFG/2013-2015/2013-2015_FemResp.dta")
-F_2017             <- read.dta13("./2_Inputs/NSFG/2015-2017/2015_2017_FemResp.dta")
+F_2013             <- read.dta13("./_2a_Inputs/NSFG/2011-2013/2011_2013.FemResp.dta")
+F_2015             <- read.dta13("./_2a_Inputs/NSFG/2013-2015/2013-2015_FemResp.dta")
+F_2017             <- read.dta13("./_2a_Inputs/NSFG/2015-2017/2015_2017_FemResp.dta")
 
 #clean 2013
 F_2013_vars        <- f.var_F_data(F_2013, 2013)

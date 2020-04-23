@@ -1,79 +1,66 @@
 
 
 simnet_hpv             <- function(dat, at) {
-  browser()
   
   ## Edges correction
   dat                  <- edges_correct_msm(dat, at)
   
-  ## Main network
+  ## MSM network
   nwparam.m            <- EpiModel::get_nwparam(dat, network = 1)
   
-  if (dat$param$method == 1) {
+  #if (dat$param$method == 1) {
     dat$attr$deg.pers <- get_degree(dat$el[[2]])
-  } else {
-    dat$attr$deg.pers <- paste0(dat$attr$race, get_degree(dat$el[[2]]))
-  }
-  dat <- tergmLite::updateModelTermInputs(dat, network = 1)
+  #} else {
+  #  dat$attr$deg.pers <- paste0(dat$attr$race, get_degree(dat$el[[2]]))
+ # }
+   dat                   <- tergmLite::updateModelTermInputs(dat, network = 1)
   
-  dat$el[[1]] <- tergmLite::simulate_network(p = dat$p[[1]],
+  dat$el[[1]]           <- tergmLite::simulate_network(p = dat$p[[1]],
                                              el = dat$el[[1]],
                                              coef.form = nwparam.m$coef.form,
                                              coef.diss = nwparam.m$coef.diss$coef.adj,
                                              save.changes = TRUE)
   
-  dat$temp$new.edges <- NULL
+
+  dat$temp$new.edges    <- NULL
   if (at == 2) {
-    new.edges.m <- matrix(dat$el[[1]], ncol = 2)
-  } else {
-    new.edges.m <- attributes(dat$el[[1]])$changes
-    new.edges.m <- new.edges.m[new.edges.m[, "to"] == 1, 1:2, drop = FALSE]
-  }
-  dat$temp$new.edges <- matrix(dat$attr$uid[new.edges.m], ncol = 2)
+    new.edges.m         <- matrix(dat$el[[1]], ncol = 2)
+  } else {        
+    new.edges.m         <- attributes(dat$el[[1]])$changes
+    new.edges.m         <- new.edges.m[new.edges.m[, "to"] == 1, 1:2, drop = FALSE]
+  }         
+  dat$temp$new.edges    <- matrix(dat$attr$uid[new.edges.m], ncol = 2)
   
   
-  ## Casual network
-  nwparam.p <- EpiModel::get_nwparam(dat, network = 2)
+  ## Het network
+  nwparam.p             <- EpiModel::get_nwparam(dat, network = 2)
   
-  if (dat$param$method == 1) {
-    dat$attr$deg.main <- get_degree(dat$el[[1]])
-  } else {
-    dat$attr$deg.main <- paste0(dat$attr$race, get_degree(dat$el[[1]]))
-  }
-  dat <- tergmLite::updateModelTermInputs(dat, network = 2)
+#  if (dat$param$method == 1) {
+    dat$attr$deg.main   <- get_degree(dat$el[[1]])
+#  } else {
+#    dat$attr$deg.main  <- paste0(dat$attr$race, get_degree(dat$el[[1]]))
+#  }
+  dat                   <- tergmLite::updateModelTermInputs(dat, network = 2)
   
-  dat$el[[2]] <- tergmLite::simulate_network(p = dat$p[[2]],
+  dat$el[[2]]           <- tergmLite::simulate_network(p = dat$p[[2]],
                                              el = dat$el[[2]],
                                              coef.form = nwparam.p$coef.form,
                                              coef.diss = nwparam.p$coef.diss$coef.adj,
                                              save.changes = TRUE)
   
   if (at == 2) {
-    new.edges.p <- matrix(dat$el[[2]], ncol = 2)
+    new.edges.p         <- matrix(dat$el[[2]], ncol = 2)
   } else {
-    new.edges.p <- attributes(dat$el[[2]])$changes
-    new.edges.p <- new.edges.p[new.edges.p[, "to"] == 1, 1:2, drop = FALSE]
+    new.edges.p         <- attributes(dat$el[[2]])$changes
+    new.edges.p         <- new.edges.p[new.edges.p[, "to"] == 1, 1:2, drop = FALSE]
   }
-  dat$temp$new.edges <- rbind(dat$temp$new.edges,
+  dat$temp$new.edges    <- rbind(dat$temp$new.edges,
                               matrix(dat$attr$uid[new.edges.p], ncol = 2))
   
   
-  ## One-off network
-  nwparam.i <- EpiModel::get_nwparam(dat, network = 3)
-  
-  if (dat$param$method == 1) {
-    dat$attr$deg.pers <- get_degree(dat$el[[2]])
-  } else {
-    dat$attr$deg.pers <- paste0(dat$attr$race, get_degree(dat$el[[2]]))
-  }
-  dat <- tergmLite::updateModelTermInputs(dat, network = 3)
-  
-  dat$el[[3]] <- tergmLite::simulate_ergm(p = dat$p[[3]],
-                                          el = dat$el[[3]],
-                                          coef = nwparam.i$coef.form)
   
   if (dat$control$save.nwstats == TRUE) {
-    dat <- calc_resim_nwstats(dat, at)
+    dat                 <- calc_resim_nwstats(dat, at)
   }
   
   return(dat)
@@ -82,19 +69,20 @@ simnet_hpv             <- function(dat, at) {
 
 
 calc_resim_nwstats <- function(dat, at) {
-  
-  for (nw in 1:3) {
-    n <- attr(dat$el[[nw]], "n")
-    edges <- nrow(dat$el[[nw]])
-    meandeg <- round(edges / n, 3)
-    concurrent <- round(mean(get_degree(dat$el[[nw]]) > 1), 3)
-    mat <- matrix(c(edges, meandeg, concurrent), ncol = 3, nrow = 1)
+
+  for (nw in 1:2) {
+    n                   <- attr(dat$el[[nw]], "n")
+    edges               <- nrow(dat$el[[nw]])
+    meandeg             <- round(edges / n, 3)
+    concurrent          <- round(mean(get_degree(dat$el[[nw]]) > 1), 3)
+    mat                 <- matrix(c(edges, meandeg, concurrent), ncol = 3, nrow = 1)
     if (at == 2) {
-      dat$stats$nwstats[[nw]] <- mat
-      colnames(dat$stats$nwstats[[nw]]) <- c("edges", "meand", "conc")
+dat$stats$nwstats[[nw]] <- mat
+ colnames(dat$stats$nwstats[[nw]]
+          )             <- c("edges", "meand", "conc")
     }
     if (at > 2) {
-      dat$stats$nwstats[[nw]] <- rbind(dat$stats$nwstats[[nw]], mat)
+dat$stats$nwstats[[nw]] <- rbind(dat$stats$nwstats[[nw]], mat)
     }
   }
   
@@ -145,10 +133,6 @@ edges_correct_msm <- function(dat, at) {
   coef.form.p <- get_nwparam(dat, network = 2)$coef.form
   coef.form.p[1] <- coef.form.p[1] + adjust
   dat$nwparam[[2]]$coef.form <- coef.form.p
-  
-  coef.form.i <- get_nwparam(dat, network = 3)$coef.form
-  coef.form.i[1] <- coef.form.i[1] + adjust
-  dat$nwparam[[3]]$coef.form <- coef.form.i
   
   return(dat)
 }

@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 rm(list=ls())
 
-library(EpiModelHIV)    #the primary package we will be using to make our models 
+library(EpiModel)    #the primary package we will be using to make our models 
 library(ndtv)        #for the fancy videos
 library(readxl)      #read in excel files 
 library(tidyverse)   #Includes a number of shortcuts for data manipulation
@@ -25,7 +25,6 @@ sessioninfo::package_info(pkgs = c("network", "networkDynamic", "statnet.common"
                                    "tergmLite", "EpiABC", "EpiModelHIV",
                                    "ARTnetData", "ARTnet"), dependencies = FALSE)
 
-
 #install.packages("sessioninfo")
 
 ```
@@ -36,8 +35,8 @@ sessioninfo::package_info(pkgs = c("network", "networkDynamic", "statnet.common"
 
 ```{r data_in}
 
-p.msmo                <- 0.1
-p.msmw                <- 0.1
+p.msmo                <- 0.2
+p.msmw                <- 0.2
 p.mswo                <- 1-(p.msmo + p.msmw)
 
 p.pos_r               <- .16   
@@ -47,7 +46,7 @@ p.pos_v               <- .56
 msm_duration          <- 71.6
 msw_duration          <- 89.5
 
-p.f                   <- 0.4
+p.f                   <- 0.35
 
 ```
 
@@ -142,19 +141,19 @@ n==(n.msmo + n.msmw + n.mswo + n.wsmo)
 ```{r msm_network}
 
 edges_msm               <- ((n.msmo + n.msmw)* 0.64 * 0.5)       #an average of 0.74 relationships per person -> edges is this times 0.5
-edges_msm_c             <- ((n.msmo + n.msmw)* 0.08)             # 8% of all MSM or MSMW should be in concurrent nodes
-edges_msm_v             <- ((n.msmo + n.msmw)* 0.64 * p.pos_v) #an average of 0.74 relationships per versatile person 
+nodes_msm_c             <- ((n.msmo + n.msmw)* 0.08)             # 8% of all MSM or MSMW should be in concurrent nodes
+nodes_msm_v             <- ((n.msmo + n.msmw)* 0.64 * p.pos_v)   #an average of 0.64 relationships per versatile person 
 
 #For MSM network we will assume straight individuals can have no partnerships- this will create a very sparce network
 
 targets                 <- c(edges_msm,  #total edges
-                             (0),        #nodefactor- the number of WSMW nodes that appear in any edge (0) 
-                             (0),        #nodefactor- the number of MSWO nodes that appear in any edge (0) 
-                             (0),        #node mix- restrict receptive/receptive partnerships (0) 
-                             (0),        #node mix- restrict insertive/insertive partnerships (0)  
-                             (0),        #nodefactor- those who are not sexually active cannot have partners (0) 
-                            edges_msm_c, #concurrent nodes   
-                            edges_msm_v) #nodefactor- expected number of versatile nodes   
+                              (0),        #nodefactor- the number of WSMO nodes that appear in any edge (0) 
+                              (0),        #nodefactor- the number of MSWO nodes that appear in any edge (0) 
+                              (0),        #node mix- restrict receptive/receptive partnerships (0) 
+                              (0),        #node mix- restrict insertive/insertive partnerships (0)  
+                              (0),        #nodefactor- those who are not sexually active cannot have partners (0) 
+                            nodes_msm_c, #concurrent nodes   
+                            nodes_msm_v) #nodefactor- expected number of versatile nodes   
      
 
 ## Model fit ---- 
@@ -165,7 +164,7 @@ f.coef.diss             <- dissolution_coefs( dissolution = (~offset(edges)),
 
 #Formation model
  f.form                 <- ~edges  +  
-                           nodefactor("behave", levels=c(3,4))  +
+                           nodefactor("behave", levels=c(3,4))    +
                            nodemix("position", levels2=c(1,6))    + 
                            nodefactor("sex.actv", levels=c(1))    +
                            concurrent                             +
@@ -173,12 +172,17 @@ f.coef.diss             <- dissolution_coefs( dissolution = (~offset(edges)),
 	
 	
 fit_msm                 <- netest(net1,  
-                                 formation    = f.form, 
-                                 target.stats = targets, 
+                                  formation    = f.form, 
+                                  target.stats = targets, 
                                  #edapprox     = FALSE,
-                                 coef.diss    = f.coef.diss) 
+                                  coef.diss    = f.coef.diss, 
+                              set.control.ergm = control.ergm(MCMC.burnin = 1e4,
+                                                             MCMC.interval= 1e4, 
+                                                              MCMLE.density.guard = exp(7)), 
+                           set.control.stergm = control.network(MCMC.burnin.min = 1e4, MCMC.burnin.max = 1e4))
 
 summary(fit_msm)
+
 
 ```
 Run model diagnositics  
@@ -193,7 +197,7 @@ dx_sim                  <- netdx(fit_msm, nsteps = (1000),
                                  keep.tedgelist = TRUE, 
                                  nwstats.formula= ~edges + 
                                                   concurrent + 
-                                                  nodefactor("position", levels=c(1,2,3)) + 
+                                                  nodefactor("position", levels=c(1,2,3, 4)) + 
                                                   degree(c(0,1,2,3)))
 
 #show what happened as a table
@@ -206,8 +210,8 @@ plot(dx_sim, stats = c("edges", "concurrent"))
 
 #Also test the static version of the model- this help in troubleshooting 
 
-#  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
-#  dx.static
+  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
+  dx.static
   
  (end1                    <- (Sys.time() - start))
 
@@ -248,36 +252,36 @@ plot(dx_sim1, stats = c("edges", "concurrent"))
 
 
 ```{r model_dx_burnin10k}
-#
-# start                    <- (Sys.time())
-#
-##Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
-#dx_sim2                  <- netdx(fit_msm, nsteps = (1000), 
-#                                 nsims = 3, 
-#                                 keep.tnetwork = FALSE, 
-#                                 ncores = 3, 
-#                                 keep.tedgelist = TRUE, 
-#                                 set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e5,
-#                                                                          MCMC.interval= 1e5), 
-#                                set.control.stergm = control.simulate.network(MCMC.burnin.min = 0.7e+5, MCMC.burnin.max = 0.7e+5),
-#                                 nwstats.formula= ~edges + 
-#                                                  concurrent + 
-#                                                  nodefactor("position", levels=c(1,2,3)) + 
-#                                                  degree(c(0,1,2,3)))
-#
-##show what happened as a table
-#dx_sim2$stats.table.formation
-#
-#plot(dx_sim2, type  = "formation" )
-#plot(dx_sim2, type  = "duration")
-#plot(dx_sim2, stats = c("edges", "concurrent"))
-#
-#
-###Also test the static version of the model- this help in troubleshooting 
-#
-###  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
-###  dx.static
-#  (end3                    <- (Sys.time() - start))
+ 
+  start                    <- (Sys.time())
+ 
+ #Simulate our model given the formation and dissolution we've established. Run for 1000 steps but just 1 simulation of it
+ dx_sim2                  <- netdx(fit_msm, nsteps = (1000), 
+                                  nsims = 3, 
+                                  keep.tnetwork = FALSE, 
+                                  ncores = 3, 
+                                  keep.tedgelist = TRUE, 
+                              #    set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e5,
+                              #                                             MCMC.interval= 1e5), 
+                              #   set.control.stergm = control.simulate.network(MCMC.burnin.min = 0.7e+5, MCMC.burnin.max = 0.7e+5),
+                                  nwstats.formula= ~edges + 
+                                                   concurrent + 
+                                                   nodefactor("position", levels=c(1,2,3)) + 
+                                                   degree(c(0,1,2,3)))
+ 
+ #show what happened as a table
+ dx_sim2$stats.table.formation
+ 
+ plot(dx_sim2, type  = "formation" )
+ plot(dx_sim2, type  = "duration")
+ plot(dx_sim2, stats = c("edges", "concurrent"))
+ 
+ 
+ ##Also test the static version of the model- this help in troubleshooting 
+ 
+ ##  dx.static     <- netdx(fit_msm, nsims = 1000, dynamic=FALSE)
+ ##  dx.static
+   (end3                    <- (Sys.time() - start))
 ```
 ##Create MSW network
 
@@ -370,11 +374,11 @@ Tester infection model for MSM
  init                   <- init.net(i.num = n*.3)
  
  # Control settings
- control                <- control.net(type = "SIS", 
+ control                <- control.net(type = "SI", 
                                       nsims = 1, 
                                      epi.by = "behave",
                                       ncores= 8,
-                                     nsteps = 2,  #(50*12), 
+                                     nsteps = 10,  #(50*12), 
                              keep.tedgelist = TRUE, 
                              initialize.FUN = initialize_func,
                        #   set.control.ergm = control.simulate.ergm(MCMC.burnin = 1e5,
@@ -383,16 +387,20 @@ Tester infection model for MSM
                       #                                                        MCMC.burnin.max = 0.7e+5),
                               keep.tnetwork = TRUE,  #,
                              resim_nets.FUN = simnet_hpv,
-                            infection.FUN = NULL, 
+                               module.order = c("resim_nets.FUN","departures.FUN","arrivals.FUN","recovery.FUN","edges_correct.FUN","get_prev.FUN") , 
                               # delete.nodes = TRUE, 
                                   skip.check = TRUE,
                                      depend = TRUE,
                                     verbose = FALSE)
-              
+          
  
 # Run the network model simulation with netsim
 sim_short              <- netsim(l.fits, param, init, control)
 
+  
+  ## Main network
+  nwparam.m            <- EpiModel::get_nwparam(dat, network = 1)
+  
 
 plot(sim_short)
 ```
